@@ -44,6 +44,11 @@ type model struct {
 	// Spinner frame index — advances on every tick
 	spinner int
 
+	// pollTick counts ticks since the last GitHub API poll. The workflow is
+	// only queried every pollEvery ticks so the spinner stays smooth at 3 s
+	// intervals while the API is hit at most once every ~10 s.
+	pollTick int
+
 	// Install progress. installProgressCh is created once and reused across
 	// installs; the goroutine holds a send reference, the Bubble Tea Cmd holds
 	// a receive reference.

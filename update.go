@@ -7,8 +7,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// tickInterval is how often the app polls for repo / workflow state.
+// tickInterval controls how often the spinner advances and repo state is polled.
 const tickInterval = 3 * time.Second
+
+// pollEvery is how many ticks to skip between GitHub API workflow polls.
+// At tickInterval=3 s this gives one API call every ~10 s instead of every 3 s.
+const pollEvery = 3
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -51,14 +55,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// -- Periodic tick ---------------------------------------------------------
 	case tickMsg:
 		m.spinner = (m.spinner + 1) % len(spinnerFrames)
+		m.pollTick = (m.pollTick + 1) % pollEvery
 		cmds := []tea.Cmd{tick(tickInterval)}
 		switch m.state {
 		case stateIdle, stateFailed:
 			// Poll repo state so we catch new commits even without inotify.
 			cmds = append(cmds, fetchRepoState)
 		case stateMonitoring:
-			// Poll the workflow until it completes.
-			cmds = append(cmds, fetchWorkflow(m.workflowName, m.trackedSHA))
+			// Poll the workflow at a reduced rate to be gentle on the API.
+			if m.pollTick == 0 {
+				cmds = append(cmds, fetchWorkflow(m.workflowName, m.trackedSHA, m.workflow.ID))
+			}
 		}
 		return m, tea.Batch(cmds...)
 
@@ -121,7 +128,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addLog(fmt.Sprintf("push OK — monitoring workflow %q for %s",
 			m.workflowName, shortSHA(m.trackedSHA)))
 		// Start polling immediately rather than waiting for the next tick.
-		return m, fetchWorkflow(m.workflowName, m.trackedSHA)
+		return m, fetchWorkflow(m.workflowName, m.trackedSHA, 0)
 
 	// -- Workflow run update ---------------------------------------------------
 	case workflowRunMsg:
@@ -210,7 +217,7 @@ func tryStartupMonitor(m *model) tea.Cmd {
 	m.trackedSHA = m.repo.HeadSHA
 	m.state = stateMonitoring
 	m.addLog(fmt.Sprintf("startup: loading workflow status for %s...", shortSHA(m.trackedSHA)))
-	return fetchWorkflow(m.workflowName, m.trackedSHA)
+	return fetchWorkflow(m.workflowName, m.trackedSHA, 0)
 }
 
 // shortSHA returns the first 7 characters of a SHA, or the full string if shorter.
