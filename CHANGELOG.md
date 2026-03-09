@@ -20,3 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `update.go`: full auto-mode event loop — detects unpushed commits, pushes, monitors workflow, installs APK, shows failure details; resets to idle after install so next commit is picked up automatically
 - `view.go`: single-pane Bubble Tea TUI — title bar with repo info, state indicator with spinner, workflow job/step tree, adb install log, rolling activity log, footer hint
 - `main.go`: CLI entry point with `-workflow`, `-package`, `-artifact` flags (same interface as vibeDev)
+- Makefile with `build`, `install` (to `~/.bin/`), and `clean` targets
+- Repo slug (`owner/repo`) shown in TUI title bar and terminal window title
+- Push-only mode: if the repo has no `.github/workflows/` files, ghwatch pushes and returns to idle without monitoring
+- Real download progress bar using direct GitHub API artifact download (streams bytes via `net/http`), rendered as `[████░░░░] 61%  12.3 MB / 20.1 MB`
+- Height-aware TUI layout: title bar, state line, and footer are always pinned; workflow, install, and activity sections share the remaining terminal height so the header never scrolls off-screen
+- Minimal workflow job output: each job shows its status icon and name with the currently running step appended inline; completed steps are not listed
