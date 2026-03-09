@@ -41,10 +41,14 @@ func (m model) View() string {
 	}
 
 	// -- Fixed footer lines (always visible) ---------------------------------
+	footerHint := "  Ctrl+C to quit"
+	if m.state == stateIdle && m.workflow.ID != 0 && m.workflow.Conclusion == "success" {
+		footerHint += dimStyle.Render("  ·  ") + runningStyle.Render("i") + dimStyle.Render(" to install")
+	}
 	footerLines := []string{
 		"",
 		dividerStyle.Render(strings.Repeat("─", w)),
-		dimStyle.Render("  Ctrl+C to quit"),
+		dimStyle.Render(footerHint),
 	}
 
 	// -- Variable body sections ----------------------------------------------

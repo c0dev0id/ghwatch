@@ -24,6 +24,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		// 'i' manually triggers the APK install for the last successful workflow.
+		case "i":
+			if m.state == stateIdle &&
+				m.workflow.ID != 0 &&
+				m.workflow.Conclusion == "success" {
+				m.state = stateInstalling
+				m.installLog = nil
+				m.downloadedBytes = 0
+				m.totalBytes = 0
+				m.addLog(fmt.Sprintf("manual install triggered (run #%d, %s)...",
+					m.workflow.ID, shortSHA(m.trackedSHA)))
+				go installToChannel(m.workflow.ID, m.trackedSHA, m.repo.Slug,
+					m.packageName, m.artifactName, m.installProgressCh)
+				return m, waitForInstallProgress(m.installProgressCh)
+			}
 		}
 
 	// -- Git filesystem event --------------------------------------------------
@@ -69,11 +85,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, delayedPush)
 			return m, tea.Batch(cmds...)
 		}
+		// On startup, load the workflow status of the current HEAD commit.
+		if cmd := tryStartupMonitor(&m); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		return m, tea.Batch(cmds...)
 
 	// -- Workflow presence check -----------------------------------------------
 	case workflowsCheckMsg:
 		m.hasWorkflows = bool(msg)
+		// On startup, load the workflow status of the current HEAD commit.
+		if cmd := tryStartupMonitor(&m); cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	// -- Pre-push delay elapsed ------------------------------------------------
@@ -92,6 +116,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateIdle
 			return m, fetchRepoState
 		}
+		m.autoInstall = true
 		m.state = stateMonitoring
 		m.addLog(fmt.Sprintf("push OK — monitoring workflow %q for %s",
 			m.workflowName, shortSHA(m.trackedSHA)))
@@ -113,13 +138,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if wr.Conclusion == "success" {
-			m.state = stateInstalling
-			m.installLog = nil
-			m.downloadedBytes = 0
-			m.totalBytes = 0
-			m.addLog(fmt.Sprintf("workflow succeeded (run #%d) — downloading & installing APK...", wr.ID))
-			go installToChannel(wr.ID, m.trackedSHA, m.repo.Slug, m.packageName, m.artifactName, m.installProgressCh)
-			return m, waitForInstallProgress(m.installProgressCh)
+			if m.autoInstall {
+				// Triggered by a push: auto-download and install.
+				m.state = stateInstalling
+				m.installLog = nil
+				m.downloadedBytes = 0
+				m.totalBytes = 0
+				m.addLog(fmt.Sprintf("workflow succeeded (run #%d) — downloading & installing APK...", wr.ID))
+				go installToChannel(wr.ID, m.trackedSHA, m.repo.Slug, m.packageName, m.artifactName, m.installProgressCh)
+				return m, waitForInstallProgress(m.installProgressCh)
+			}
+			// Startup load: just display the result; let the user press 'i' to install.
+			m.addLog(fmt.Sprintf("workflow succeeded (run #%d) — press 'i' to install", wr.ID))
+			m.state = stateIdle
+			return m, fetchRepoState
 		}
 
 		// Workflow failed.
@@ -150,6 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installLog = msg.FinalLog
 		m.downloadedBytes = 0
 		m.totalBytes = 0
+		m.autoInstall = false
 		if msg.Err != nil {
 			m.state = stateFailed
 			m.addLog("install failed: " + msg.Err.Error())
@@ -161,6 +194,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// tryStartupMonitor starts workflow monitoring for the HEAD commit when we
+// first launch and the repo is fully in sync with remote. It fires at most
+// once (guarded by trackedSHA == ""). Returns nil if the conditions are not
+// yet met or have already been satisfied.
+func tryStartupMonitor(m *model) tea.Cmd {
+	if m.trackedSHA != "" || m.repo.HeadSHA == "" || !m.hasWorkflows {
+		return nil
+	}
+	if m.state != stateIdle || m.repo.Ahead != 0 {
+		return nil
+	}
+	m.trackedSHA = m.repo.HeadSHA
+	m.state = stateMonitoring
+	m.addLog(fmt.Sprintf("startup: loading workflow status for %s...", shortSHA(m.trackedSHA)))
+	return fetchWorkflow(m.workflowName, m.trackedSHA)
 }
 
 // shortSHA returns the first 7 characters of a SHA, or the full string if shorter.

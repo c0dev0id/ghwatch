@@ -33,6 +33,11 @@ type model struct {
 	// When false, push-only mode is used (no workflow monitoring or install).
 	hasWorkflows bool
 
+	// autoInstall is true when the current monitoring cycle was triggered by a
+	// push (so ghwatch should auto-install on success). It is false during the
+	// startup load and when the user manually triggers an install via 'i'.
+	autoInstall bool
+
 	// GitHub Actions workflow data for the tracked SHA
 	workflow workflowRun
 
