@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -336,124 +338,304 @@ func axmlReadUTF8(data []byte, off int) string {
 	return string(data[off:end])
 }
 
-// -- Install command ---------------------------------------------------------
+// -- GitHub artifact download ------------------------------------------------
 
-// installFromRun downloads the APK artifact for runID, installs it via adb,
-// and launches the app.  Every step is recorded in the returned log.
-//
-// artifactName, when non-empty, limits the download to that specific GitHub
-// Actions artifact (e.g. "app-signed").  When empty all artifacts are
-// downloaded and the best APK is selected by score.
-//
-// packageName accepts two formats:
-//
-//	"com.example.app"                – launches via `adb shell monkey`
-//	"com.example.app/.MainActivity" – launches via `adb shell am start -n`
-//
-// If packageName is empty, the package name is read directly from the APK's
-// AndroidManifest.xml (no external tools required).  The activity class
-// cannot be auto-detected; launch falls back to monkey in that case.
-func installFromRun(runID int, sha, packageName, artifactName string) tea.Cmd {
-	return func() tea.Msg {
-		var log []string
-		appendLog := func(line string) { log = append(log, line) }
+// artifactInfo holds the ID and name of one GitHub Actions artifact.
+type artifactInfo struct {
+	ID   int
+	Name string
+}
 
-		fail := func(err error) tea.Msg {
-			return adbInstallMsg{sha: sha, err: err, log: log}
+// getGHToken retrieves the active GitHub token via the gh CLI.
+func getGHToken() (string, error) {
+	tok, err := runGH("auth", "token")
+	if err != nil {
+		return "", fmt.Errorf("gh auth token: %v", err)
+	}
+	return strings.TrimSpace(tok), nil
+}
+
+// listArtifacts returns artifacts for a workflow run, filtered by name when
+// name is non-empty.
+func listArtifacts(token, repoSlug string, runID int, name string) ([]artifactInfo, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs/%d/artifacts", repoSlug, runID)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Artifacts []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"artifacts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+
+	var out []artifactInfo
+	for _, a := range body.Artifacts {
+		if name == "" || a.Name == name {
+			out = append(out, artifactInfo{ID: a.ID, Name: a.Name})
 		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no artifacts found (filter: %q)", name)
+	}
+	return out, nil
+}
 
-		// 1. Download artifact(s)
-		dlArgs := []string{"run", "download", fmt.Sprintf("%d", runID), "--dir", ""}
-		if artifactName != "" {
-			appendLog(fmt.Sprintf("↓  gh run download %d --name %s", runID, artifactName))
-			dlArgs = []string{"run", "download", fmt.Sprintf("%d", runID), "--name", artifactName, "--dir", ""}
+// progressReader wraps an io.Reader and sends byte-level progress to ch.
+type progressReader struct {
+	r          io.Reader
+	total      int64 // 0 = unknown
+	downloaded int64
+	ch         chan<- installProgressMsg
+}
+
+func (pr *progressReader) Read(p []byte) (n int, err error) {
+	n, err = pr.r.Read(p)
+	pr.downloaded += int64(n)
+	// Non-blocking send: the TUI drains the channel on every update; if it
+	// falls behind we just skip a frame rather than stalling the download.
+	select {
+	case pr.ch <- installProgressMsg{Downloaded: pr.downloaded, Total: pr.total}:
+	default:
+	}
+	return
+}
+
+// downloadArtifactZip downloads a single GitHub artifact as a zip file into
+// a temp file (caller must delete it) while streaming progress to ch.
+func downloadArtifactZip(token, repoSlug string, artifactID int, ch chan<- installProgressMsg) (string, error) {
+	// Step 1: ask the API for the redirect URL (302 → signed S3 URL).
+	noFollow := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/actions/artifacts/%d/zip", repoSlug, artifactID)
+	req, _ := http.NewRequest("GET", apiURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := noFollow.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("artifact redirect: %v", err)
+	}
+	resp.Body.Close()
+
+	s3URL := resp.Header.Get("Location")
+	if s3URL == "" {
+		return "", fmt.Errorf("no redirect from GitHub API (status %d)", resp.StatusCode)
+	}
+
+	// Step 2: stream from S3 with progress tracking.
+	resp2, err := http.Get(s3URL) //nolint:noctx — best-effort download
+	if err != nil {
+		return "", fmt.Errorf("download: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	total := resp2.ContentLength
+	if total < 0 {
+		total = 0
+	}
+
+	tmp, err := os.CreateTemp("", "ghwatch-artifact-*.zip")
+	if err != nil {
+		return "", fmt.Errorf("tempfile: %v", err)
+	}
+
+	pr := &progressReader{r: resp2.Body, total: total, ch: ch}
+	if _, err := io.Copy(tmp, pr); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("download stream: %v", err)
+	}
+	tmp.Close()
+	return tmp.Name(), nil
+}
+
+// extractZip unpacks a zip file into dir.
+func extractZip(zipPath, dir string) error {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+
+	for _, f := range zr.File {
+		outPath := filepath.Join(dir, f.Name)
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(outPath, 0755) //nolint:errcheck
+			continue
+		}
+		os.MkdirAll(filepath.Dir(outPath), 0755) //nolint:errcheck
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.Create(outPath)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, copyErr := io.Copy(out, rc)
+		rc.Close()
+		out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+	}
+	return nil
+}
+
+// -- Install pipeline --------------------------------------------------------
+
+// installToChannel runs the full download → extract → adb install → launch
+// pipeline as a goroutine. Progress and log lines are sent to ch; the final
+// message always has Done == true.
+//
+// packageName accepts "" (auto-detect from manifest), "com.example.app"
+// (monkey launch), or "com.example.app/.MainActivity" (am start -n).
+func installToChannel(runID int, sha, repoSlug, packageName, artifactName string, ch chan<- installProgressMsg) {
+	var log []string
+	appendLog := func(line string) {
+		log = append(log, line)
+		ch <- installProgressMsg{LogLine: line}
+	}
+	fail := func(err error) {
+		ch <- installProgressMsg{Done: true, Err: err, FinalLog: log}
+	}
+
+	// 1. Authenticate.
+	token, err := getGHToken()
+	if err != nil {
+		appendLog("✗  " + err.Error())
+		fail(err)
+		return
+	}
+
+	// 2. List artifacts.
+	if artifactName != "" {
+		appendLog(fmt.Sprintf("↓  artifact %q from run #%d", artifactName, runID))
+	} else {
+		appendLog(fmt.Sprintf("↓  all artifacts from run #%d", runID))
+	}
+	artifacts, err := listArtifacts(token, repoSlug, runID, artifactName)
+	if err != nil {
+		appendLog("✗  " + err.Error())
+		fail(err)
+		return
+	}
+
+	// 3. Download + extract each artifact into a single temp dir.
+	tmpDir, err := os.MkdirTemp("", "ghwatch-apk-*")
+	if err != nil {
+		appendLog("✗  tempdir: " + err.Error())
+		fail(fmt.Errorf("tempdir: %v", err))
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, a := range artifacts {
+		appendLog(fmt.Sprintf("↓  %s", a.Name))
+		zipPath, err := downloadArtifactZip(token, repoSlug, a.ID, ch)
+		if err != nil {
+			appendLog("✗  " + err.Error())
+			fail(err)
+			return
+		}
+		if err := extractZip(zipPath, tmpDir); err != nil {
+			os.Remove(zipPath)
+			appendLog("✗  extract: " + err.Error())
+			fail(fmt.Errorf("extract: %v", err))
+			return
+		}
+		os.Remove(zipPath)
+		// Signal that download is done so the progress bar clears.
+		ch <- installProgressMsg{Downloaded: 0, Total: 0}
+		appendLog("✓  extracted")
+	}
+
+	// 4. Locate best APK.
+	apkPath, err := findAPK(tmpDir)
+	if err != nil {
+		appendLog("✗  " + err.Error())
+		fail(err)
+		return
+	}
+	appendLog("✓  APK: " + filepath.Base(apkPath))
+
+	// 5. Install.
+	appendLog("⟳  adb install -r " + filepath.Base(apkPath))
+	if out, err := runADB("install", "-r", apkPath); err != nil {
+		appendLog("✗  " + err.Error())
+		fail(fmt.Errorf("adb install: %v", err))
+		return
+	} else {
+		for _, l := range strings.Split(out, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				appendLog("   " + l)
+			}
+		}
+	}
+
+	// 6. Resolve package name (from manifest if not provided).
+	pkg := packageName
+	if pkg == "" {
+		if p, err := readPackageFromManifest(apkPath); err != nil {
+			appendLog("–  manifest: " + err.Error())
 		} else {
-			appendLog(fmt.Sprintf("↓  gh run download %d (all artifacts)", runID))
-			dlArgs = []string{"run", "download", fmt.Sprintf("%d", runID), "--dir", ""}
+			pkg = p
+			appendLog("   pkg: " + pkg + " (from manifest)")
 		}
+	}
 
-		tmpDir, err := os.MkdirTemp("", "vibeDev-apk-*")
-		if err != nil {
-			appendLog("✗  tempdir: " + err.Error())
-			return fail(fmt.Errorf("tempdir: %v", err))
-		}
-		defer os.RemoveAll(tmpDir)
+	// 7. Launch.
+	if pkg == "" {
+		appendLog("–  launch skipped (package unknown)")
+		ch <- installProgressMsg{Done: true, FinalLog: log}
+		return
+	}
 
-		// Fill in the tmpDir placeholder at the end of dlArgs.
-		dlArgs[len(dlArgs)-1] = tmpDir
-		if out, err := runGH(dlArgs...); err != nil {
-			appendLog("✗  " + err.Error())
-			return fail(fmt.Errorf("artifact download: %v", err))
-		} else if out != "" {
-			appendLog("   " + out)
-		}
-
-		// 2. Locate APK
-		apkPath, err := findAPK(tmpDir)
-		if err != nil {
-			appendLog("✗  " + err.Error())
-			return fail(err)
-		}
-		appendLog("✓  APK: " + filepath.Base(apkPath))
-
-		// 3. Install (upgrade if already present; -r = replace)
-		appendLog("⟳  adb install -r " + filepath.Base(apkPath))
-		if out, err := runADB("install", "-r", apkPath); err != nil {
-			appendLog("✗  " + err.Error())
-			return fail(fmt.Errorf("adb install: %v", err))
+	if strings.Contains(pkg, "/") {
+		appendLog("⟳  adb shell am start -n " + pkg)
+		if out, err := runADB("shell", "am", "start", "-n", pkg); err != nil {
+			appendLog("✗  " + err.Error()) // launch failure is non-fatal
 		} else {
 			for _, l := range strings.Split(out, "\n") {
-				l = strings.TrimSpace(l)
-				if l != "" {
+				if l = strings.TrimSpace(l); l != "" {
 					appendLog("   " + l)
 				}
 			}
 		}
-
-		// 4. Resolve package / component for launch
-		pkg := packageName
-		if pkg == "" {
-			p, err := readPackageFromManifest(apkPath)
-			if err != nil {
-				appendLog("–  manifest: " + err.Error())
-			} else {
-				pkg = p
-				appendLog("   pkg: " + pkg + " (from manifest)")
-			}
+	} else {
+		appendLog("⟳  adb shell monkey -p " + pkg)
+		if out, err := runADB("shell", "monkey", "-p", pkg,
+			"-c", "android.intent.category.LAUNCHER", "1"); err != nil {
+			appendLog("✗  " + err.Error())
+		} else if out != "" {
+			appendLog("   " + out)
 		}
+	}
 
-		// 5. Launch
-		if pkg == "" {
-			appendLog("–  launch skipped (package unknown)")
-			return adbInstallMsg{sha: sha, err: nil, log: log}
-		}
+	ch <- installProgressMsg{Done: true, FinalLog: log}
+}
 
-		if strings.Contains(pkg, "/") {
-			// Component "pkg/.Activity" → am start -n
-			appendLog("⟳  adb shell am start -n " + pkg)
-			if out, err := runADB("shell", "am", "start", "-n", pkg); err != nil {
-				appendLog("✗  " + err.Error())
-				// Launch failure is non-fatal; install still succeeded.
-			} else {
-				for _, l := range strings.Split(out, "\n") {
-					l = strings.TrimSpace(l)
-					if l != "" {
-						appendLog("   " + l)
-					}
-				}
-			}
-		} else {
-			// Package only → trigger LAUNCHER intent via monkey
-			appendLog("⟳  adb shell monkey -p " + pkg)
-			if out, err := runADB("shell", "monkey", "-p", pkg,
-				"-c", "android.intent.category.LAUNCHER", "1"); err != nil {
-				appendLog("✗  " + err.Error())
-			} else if out != "" {
-				appendLog("   " + out)
-			}
-		}
-
-		return adbInstallMsg{sha: sha, err: nil, log: log}
+// waitForInstallProgress returns a Cmd that reads one installProgressMsg from ch.
+func waitForInstallProgress(ch <-chan installProgressMsg) tea.Cmd {
+	return func() tea.Msg {
+		return <-ch
 	}
 }
 

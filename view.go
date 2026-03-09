@@ -179,7 +179,7 @@ func activeStepName(steps []workflowStep) string {
 	return ""
 }
 
-// renderInstallLog renders the adb install step log.
+// renderInstallLog renders the install section with an optional progress bar.
 func renderInstallLog(m model) string {
 	var b strings.Builder
 	b.WriteString(sectionHeaderStyle.Render("Install"))
@@ -188,7 +188,45 @@ func renderInstallLog(m model) string {
 		b.WriteString(dimStyle.Render("  " + line))
 		b.WriteString("\n")
 	}
+	if m.downloadedBytes > 0 || m.totalBytes > 0 {
+		b.WriteString("  " + renderProgressBar(m.downloadedBytes, m.totalBytes, 24))
+		b.WriteString("\n")
+	}
 	return b.String()
+}
+
+// renderProgressBar renders a compact progress bar.
+//
+//	[████████████░░░░░░░░]  61%  12.3 MB / 20.1 MB
+//	[▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓]  4.2 MB  (size unknown)
+func renderProgressBar(downloaded, total int64, barWidth int) string {
+	if total > 0 {
+		pct := float64(downloaded) / float64(total)
+		if pct > 1 {
+			pct = 1
+		}
+		filled := int(pct * float64(barWidth))
+		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+		return runningStyle.Render(fmt.Sprintf("[%s]  %3.0f%%  %s / %s",
+			bar, pct*100, formatBytes(downloaded), formatBytes(total)))
+	}
+	// Unknown total — show bytes downloaded with a moving placeholder bar.
+	bar := strings.Repeat("▒", barWidth)
+	return runningStyle.Render(fmt.Sprintf("[%s]  %s", bar, formatBytes(downloaded)))
+}
+
+// formatBytes formats a byte count as a human-readable string (e.g. "4.2 MB").
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // -- Helpers -----------------------------------------------------------------

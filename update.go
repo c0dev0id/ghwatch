@@ -110,8 +110,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if wr.Conclusion == "success" {
 			m.state = stateInstalling
+			m.installLog = nil
+			m.downloadedBytes = 0
+			m.totalBytes = 0
 			m.addLog(fmt.Sprintf("workflow succeeded (run #%d) — downloading & installing APK...", wr.ID))
-			return m, installFromRun(wr.ID, m.trackedSHA, m.packageName, m.artifactName)
+			go installToChannel(wr.ID, m.trackedSHA, m.repo.Slug, m.packageName, m.artifactName, m.installProgressCh)
+			return m, waitForInstallProgress(m.installProgressCh)
 		}
 
 		// Workflow failed.
@@ -120,18 +124,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addLog("url: " + wr.URL)
 		return m, nil
 
-	// -- ADB install result ---------------------------------------------------
-	case adbInstallMsg:
-		m.installLog = msg.log
-		if msg.err != nil {
+	// -- Install progress / completion ----------------------------------------
+	case installProgressMsg:
+		if !msg.Done {
+			// Accumulate log lines.
+			if msg.LogLine != "" {
+				m.installLog = append(m.installLog, msg.LogLine)
+			}
+			// Update download progress counters (zero means download is done).
+			if msg.Downloaded > 0 || msg.Total > 0 {
+				m.downloadedBytes = msg.Downloaded
+				m.totalBytes = msg.Total
+			} else if msg.LogLine != "" {
+				// A log line after zeroed counters means we moved past the download phase.
+				m.downloadedBytes = 0
+				m.totalBytes = 0
+			}
+			return m, waitForInstallProgress(m.installProgressCh)
+		}
+		// Install pipeline finished.
+		m.installLog = msg.FinalLog
+		m.downloadedBytes = 0
+		m.totalBytes = 0
+		if msg.Err != nil {
 			m.state = stateFailed
-			m.addLog("install failed: " + msg.err.Error())
+			m.addLog("install failed: " + msg.Err.Error())
 		} else {
 			m.addLog("install successful! ✓")
-			// Return to idle so the next commit is picked up automatically.
 			m.state = stateIdle
 		}
-		// Re-check repo state immediately — a new commit may have landed.
 		return m, fetchRepoState
 	}
 

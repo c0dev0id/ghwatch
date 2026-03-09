@@ -75,8 +75,13 @@ type tickMsg           time.Time
 type gitPushMsg        struct{ err error }
 type gitChangeMsg      struct{}
 type workflowsCheckMsg bool // true = repo has .github/workflows/ files
-type adbInstallMsg     struct {
-	sha string
-	err error
-	log []string
+// installProgressMsg is sent repeatedly while an install is in progress.
+// When Done is true the install has finished (check Err for failure).
+type installProgressMsg struct {
+	Downloaded int64    // bytes downloaded so far
+	Total      int64    // total bytes to download (0 = unknown)
+	LogLine    string   // new log line to append (empty = progress-only update)
+	Done       bool     // true when the entire install pipeline has finished
+	Err        error    // non-nil on failure (only valid when Done == true)
+	FinalLog   []string // full log (only populated when Done == true)
 }

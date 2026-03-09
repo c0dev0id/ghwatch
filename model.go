@@ -39,7 +39,14 @@ type model struct {
 	// Spinner frame index — advances on every tick
 	spinner int
 
-	// Output lines from the last adb install attempt
+	// Install progress. installProgressCh is created once and reused across
+	// installs; the goroutine holds a send reference, the Bubble Tea Cmd holds
+	// a receive reference.
+	installProgressCh chan installProgressMsg
+	downloadedBytes   int64
+	totalBytes        int64
+
+	// Log lines accumulated from the current (or last) install run.
 	installLog []string
 
 	// Rolling activity log shown at the bottom of the TUI
@@ -48,9 +55,10 @@ type model struct {
 
 func initialModel(workflowName, packageName, artifactName string) model {
 	return model{
-		workflowName: workflowName,
-		packageName:  packageName,
-		artifactName: artifactName,
+		workflowName:      workflowName,
+		packageName:       packageName,
+		artifactName:      artifactName,
+		installProgressCh: make(chan installProgressMsg, 64),
 	}
 }
 
