@@ -17,7 +17,11 @@ func (m model) View() string {
 	}
 
 	// -- Title bar -----------------------------------------------------------
-	title := titleStyle.Render(" ghwatch ")
+	titleText := " ghwatch "
+	if m.repo.Slug != "" {
+		titleText = " ghwatch  " + m.repo.Slug + " "
+	}
+	title := titleStyle.Render(titleText)
 	var repoInfo string
 	if m.repo.Error != "" {
 		repoInfo = errorStyle.Render("  " + m.repo.Error)

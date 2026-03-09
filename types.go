@@ -36,6 +36,7 @@ func (s appState) String() string {
 type repoState struct {
 	Branch  string
 	Remote  string
+	Slug    string // "owner/repo" parsed from remote URL
 	HeadSHA string
 	Ahead   int
 	Error   string

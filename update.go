@@ -48,9 +48,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// -- Repository state update -----------------------------------------------
 	case repoStateMsg:
+		prevSlug := m.repo.Slug
 		m.repo = repoState(msg)
 		if m.repo.Error != "" {
 			return m, nil
+		}
+		var cmds []tea.Cmd
+		// Update terminal window title whenever the slug becomes known or changes.
+		if m.repo.Slug != "" && m.repo.Slug != prevSlug {
+			cmds = append(cmds, tea.SetWindowTitle("ghwatch — "+m.repo.Slug))
 		}
 		// Trigger a push when there are unpushed commits and we are not busy.
 		if (m.state == stateIdle || m.state == stateFailed) && m.repo.Ahead > 0 {
@@ -60,9 +66,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.installLog = nil
 			m.addLog(fmt.Sprintf("detected %d unpushed commit(s) — pushing %s...",
 				m.repo.Ahead, shortSHA(m.repo.HeadSHA)))
-			return m, gitPush
+			cmds = append(cmds, gitPush)
+			return m, tea.Batch(cmds...)
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	// -- Push result -----------------------------------------------------------
 	case gitPushMsg:

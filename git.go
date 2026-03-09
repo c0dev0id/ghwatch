@@ -38,6 +38,28 @@ func gitPush() tea.Msg {
 	return gitPushMsg{err: err}
 }
 
+// -- Helpers -----------------------------------------------------------------
+
+// parseSlug extracts "owner/repo" from a remote URL, supporting both HTTPS
+// (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git)
+// formats. Returns empty string if the URL cannot be parsed.
+func parseSlug(url string) string {
+	url = strings.TrimSuffix(url, ".git")
+	// SSH: git@github.com:owner/repo
+	if i := strings.Index(url, ":"); i != -1 && !strings.HasPrefix(url, "http") {
+		slug := url[i+1:]
+		if strings.Count(slug, "/") == 1 {
+			return slug
+		}
+	}
+	// HTTPS: https://github.com/owner/repo
+	parts := strings.Split(url, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	}
+	return ""
+}
+
 // -- Repo state fetch --------------------------------------------------------
 
 // fetchRepoState returns a repoStateMsg with branch / remote / HEAD / ahead count.
@@ -63,6 +85,10 @@ func fetchRepoState() tea.Msg {
 		remote = "origin"
 	}
 	rs.Remote = remote
+
+	if url, err := runGit("remote", "get-url", remote); err == nil {
+		rs.Slug = parseSlug(url)
+	}
 
 	unpushed := make(map[string]bool)
 	upstream := remote + "/" + branch
