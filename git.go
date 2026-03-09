@@ -33,6 +33,14 @@ func tick(d time.Duration) tea.Cmd {
 
 // -- Push command ------------------------------------------------------------
 
+// delayedPush waits 1 second before signalling the model to actually push.
+// This avoids racing against tools (e.g. IDE formatters) that write to the
+// working tree in the brief window after a commit lands.
+func delayedPush() tea.Msg {
+	time.Sleep(time.Second)
+	return pushReadyMsg{}
+}
+
 func gitPush() tea.Msg {
 	_, err := runGit("push")
 	return gitPushMsg{err: err}

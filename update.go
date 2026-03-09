@@ -66,7 +66,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.installLog = nil
 			m.addLog(fmt.Sprintf("detected %d unpushed commit(s) — pushing %s...",
 				m.repo.Ahead, shortSHA(m.repo.HeadSHA)))
-			cmds = append(cmds, gitPush)
+			cmds = append(cmds, delayedPush)
 			return m, tea.Batch(cmds...)
 		}
 		return m, tea.Batch(cmds...)
@@ -75,6 +75,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workflowsCheckMsg:
 		m.hasWorkflows = bool(msg)
 		return m, nil
+
+	// -- Pre-push delay elapsed ------------------------------------------------
+	case pushReadyMsg:
+		return m, gitPush
 
 	// -- Push result -----------------------------------------------------------
 	case gitPushMsg:

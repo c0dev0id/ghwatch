@@ -75,6 +75,7 @@ type tickMsg           time.Time
 type gitPushMsg        struct{ err error }
 type gitChangeMsg      struct{}
 type workflowsCheckMsg bool // true = repo has .github/workflows/ files
+type pushReadyMsg       struct{} // fired after the pre-push delay elapses
 // installProgressMsg is sent repeatedly while an install is in progress.
 // When Done is true the install has finished (check Err for failure).
 type installProgressMsg struct {
