@@ -7,16 +7,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// View renders the full TUI.
+// View renders the full TUI with a fixed title and footer, and a
+// height-bounded body so content never pushes the title off-screen.
 func (m model) View() string {
-	var b strings.Builder
-
 	w := m.width
 	if w == 0 {
 		w = 80
 	}
 
-	// -- Title bar -----------------------------------------------------------
+	// -- Fixed top lines (always visible) ------------------------------------
 	titleText := " ghwatch "
 	if m.repo.Slug != "" {
 		titleText = " ghwatch  " + m.repo.Slug + " "
@@ -33,54 +32,149 @@ func (m model) View() string {
 		repoInfo = dimStyle.Render(fmt.Sprintf("  %s → %s/%s",
 			m.repo.Branch, m.repo.Remote, m.repo.Branch)) + aheadStr
 	}
-	b.WriteString(title + repoInfo)
-	b.WriteString("\n")
-	b.WriteString(dividerStyle.Render(strings.Repeat("─", w)))
-	b.WriteString("\n")
 
-	// -- State section -------------------------------------------------------
-	b.WriteString("\n")
-	b.WriteString(renderState(m))
-	b.WriteString("\n")
-
-	// -- Workflow section ----------------------------------------------------
-	if m.workflow.ID != 0 || m.state == stateMonitoring {
-		b.WriteString("\n")
-		b.WriteString(renderWorkflow(m))
-		b.WriteString("\n")
+	topLines := []string{
+		title + repoInfo,
+		dividerStyle.Render(strings.Repeat("─", w)),
+		"",
+		renderState(m),
 	}
 
-	// -- Install log section -------------------------------------------------
-	if len(m.installLog) > 0 {
-		b.WriteString("\n")
-		b.WriteString(renderInstallLog(m))
-		b.WriteString("\n")
+	// -- Fixed footer lines (always visible) ---------------------------------
+	footerLines := []string{
+		"",
+		dividerStyle.Render(strings.Repeat("─", w)),
+		dimStyle.Render("  Ctrl+C to quit"),
 	}
 
-	// -- Activity log --------------------------------------------------------
-	if len(m.activityLog) > 0 {
-		b.WriteString("\n")
-		b.WriteString(sectionHeaderStyle.Render("Activity"))
-		b.WriteString("\n")
-		lines := m.activityLog
-		visible := m.visibleLogLines()
-		if len(lines) > visible {
-			lines = lines[len(lines)-visible:]
+	// -- Variable body sections ----------------------------------------------
+	workflowLines := workflowSectionLines(m)
+	installLines := installSectionLines(m)
+	activityLines := activitySectionLines(m)
+
+	// Calculate how many lines the body sections can occupy.
+	budget := m.height - len(topLines) - len(footerLines)
+	if budget < 0 {
+		budget = 0
+	}
+
+	// Allocate budget: workflow and install each get up to 1/3 of budget,
+	// activity gets the rest (showing the most recent lines).
+	third := budget / 3
+
+	wAlloc := min(len(workflowLines), third)
+	iAlloc := min(len(installLines), third)
+	aAlloc := budget - wAlloc - iAlloc
+	if aAlloc < 0 {
+		aAlloc = 0
+	}
+	aAlloc = min(len(activityLines), aAlloc)
+
+	// Build final line list.
+	var lines []string
+	lines = append(lines, topLines...)
+
+	if wAlloc > 0 {
+		lines = append(lines, "")
+		lines = append(lines, workflowLines[:wAlloc]...)
+	}
+	if iAlloc > 0 {
+		lines = append(lines, "")
+		lines = append(lines, installLines[:iAlloc]...)
+	}
+	if aAlloc > 0 {
+		lines = append(lines, "")
+		// Show the most recent lines (tail) when the section is clamped.
+		tail := activityLines[len(activityLines)-aAlloc:]
+		lines = append(lines, tail...)
+	}
+
+	lines = append(lines, footerLines...)
+
+	return strings.Join(lines, "\n")
+}
+
+// workflowSectionLines returns the workflow section as a slice of lines,
+// or nil if there is nothing to show.
+func workflowSectionLines(m model) []string {
+	if m.workflow.ID == 0 && m.state != stateMonitoring {
+		return nil
+	}
+
+	wr := m.workflow
+	var headerStatus string
+	if wr.ID == 0 {
+		headerStatus = runningStyle.Render("waiting...")
+	} else {
+		headerStatus = renderStatus(wr.Status, wr.Conclusion)
+	}
+
+	var lines []string
+	lines = append(lines, sectionHeaderStyle.Render("Workflow")+
+		" "+dimStyle.Render(m.workflowName)+
+		"  "+headerStatus)
+
+	if wr.URL != "" && wr.Status == "completed" && wr.Conclusion != "success" {
+		lines = append(lines, "  "+dimStyle.Render("url: ")+wr.URL)
+		if wr.ID != 0 {
+			lines = append(lines, "  "+dimStyle.Render(fmt.Sprintf("run id: %d", wr.ID)))
 		}
-		for _, l := range lines {
-			b.WriteString(logStyle.Render("  " + l))
-			b.WriteString("\n")
-		}
 	}
 
-	// -- Footer --------------------------------------------------------------
-	b.WriteString("\n")
-	b.WriteString(dividerStyle.Render(strings.Repeat("─", w)))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  Ctrl+C to quit"))
-	b.WriteString("\n")
+	for _, job := range wr.Jobs {
+		jobIcon := renderStatusIcon(job.Status, job.Conclusion)
+		activeStep := activeStepName(job.Steps)
+		stepSuffix := ""
+		if activeStep != "" {
+			stepSuffix = "  " + dimStyle.Render(activeStep)
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s%s",
+			jobIcon,
+			lipgloss.NewStyle().Bold(true).Render(job.Name),
+			stepSuffix))
+	}
 
-	return b.String()
+	return lines
+}
+
+// installSectionLines returns the install section as a slice of lines,
+// or nil if there is nothing to show.
+func installSectionLines(m model) []string {
+	if len(m.installLog) == 0 && m.downloadedBytes == 0 && m.totalBytes == 0 {
+		return nil
+	}
+
+	var lines []string
+	lines = append(lines, sectionHeaderStyle.Render("Install"))
+	for _, line := range m.installLog {
+		lines = append(lines, dimStyle.Render("  "+line))
+	}
+	if m.downloadedBytes > 0 || m.totalBytes > 0 {
+		lines = append(lines, "  "+renderProgressBar(m.downloadedBytes, m.totalBytes, 24))
+	}
+	return lines
+}
+
+// activitySectionLines returns the activity log section as a slice of lines,
+// or nil if there is nothing to show. The first line is always the header.
+func activitySectionLines(m model) []string {
+	if len(m.activityLog) == 0 {
+		return nil
+	}
+	var lines []string
+	lines = append(lines, sectionHeaderStyle.Render("Activity"))
+	for _, l := range m.activityLog {
+		lines = append(lines, logStyle.Render("  "+l))
+	}
+	return lines
+}
+
+// min returns the smaller of a and b.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // renderState renders the current state indicator line.
@@ -124,50 +218,6 @@ func renderState(m model) string {
 	}
 }
 
-// renderWorkflow renders the workflow job list with minimal output.
-// Each job shows its status icon and name, with the currently running
-// step appended inline. Completed steps are not listed.
-func renderWorkflow(m model) string {
-	var b strings.Builder
-
-	wr := m.workflow
-	var headerStatus string
-	if wr.ID == 0 {
-		headerStatus = runningStyle.Render("waiting...")
-	} else {
-		headerStatus = renderStatus(wr.Status, wr.Conclusion)
-	}
-
-	b.WriteString(sectionHeaderStyle.Render("Workflow") +
-		" " + dimStyle.Render(m.workflowName) +
-		"  " + headerStatus)
-	b.WriteString("\n")
-
-	if wr.URL != "" && wr.Status == "completed" && wr.Conclusion != "success" {
-		b.WriteString("  " + dimStyle.Render("url: ") + wr.URL)
-		b.WriteString("\n")
-		if wr.ID != 0 {
-			b.WriteString("  " + dimStyle.Render(fmt.Sprintf("run id: %d", wr.ID)))
-			b.WriteString("\n")
-		}
-	}
-
-	for _, job := range wr.Jobs {
-		jobIcon := renderStatusIcon(job.Status, job.Conclusion)
-		activeStep := activeStepName(job.Steps)
-		stepSuffix := ""
-		if activeStep != "" {
-			stepSuffix = "  " + dimStyle.Render(activeStep)
-		}
-		b.WriteString(fmt.Sprintf("  %s %s%s\n",
-			jobIcon,
-			lipgloss.NewStyle().Bold(true).Render(job.Name),
-			stepSuffix))
-	}
-
-	return b.String()
-}
-
 // activeStepName returns the name of the currently in_progress step,
 // or empty string if no step is actively running.
 func activeStepName(steps []workflowStep) string {
@@ -179,26 +229,10 @@ func activeStepName(steps []workflowStep) string {
 	return ""
 }
 
-// renderInstallLog renders the install section with an optional progress bar.
-func renderInstallLog(m model) string {
-	var b strings.Builder
-	b.WriteString(sectionHeaderStyle.Render("Install"))
-	b.WriteString("\n")
-	for _, line := range m.installLog {
-		b.WriteString(dimStyle.Render("  " + line))
-		b.WriteString("\n")
-	}
-	if m.downloadedBytes > 0 || m.totalBytes > 0 {
-		b.WriteString("  " + renderProgressBar(m.downloadedBytes, m.totalBytes, 24))
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
 // renderProgressBar renders a compact progress bar.
 //
 //	[████████████░░░░░░░░]  61%  12.3 MB / 20.1 MB
-//	[▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓]  4.2 MB  (size unknown)
+//	[▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒]  4.2 MB  (size unknown)
 func renderProgressBar(downloaded, total int64, barWidth int) string {
 	if total > 0 {
 		pct := float64(downloaded) / float64(total)
@@ -210,7 +244,7 @@ func renderProgressBar(downloaded, total int64, barWidth int) string {
 		return runningStyle.Render(fmt.Sprintf("[%s]  %3.0f%%  %s / %s",
 			bar, pct*100, formatBytes(downloaded), formatBytes(total)))
 	}
-	// Unknown total — show bytes downloaded with a moving placeholder bar.
+	// Unknown total — show bytes downloaded with a placeholder bar.
 	bar := strings.Repeat("▒", barWidth)
 	return runningStyle.Render(fmt.Sprintf("[%s]  %s", bar, formatBytes(downloaded)))
 }
