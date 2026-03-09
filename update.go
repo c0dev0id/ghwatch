@@ -71,12 +71,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	// -- Workflow presence check -----------------------------------------------
+	case workflowsCheckMsg:
+		m.hasWorkflows = bool(msg)
+		return m, nil
+
 	// -- Push result -----------------------------------------------------------
 	case gitPushMsg:
 		if msg.err != nil {
 			m.state = stateFailed
 			m.addLog("push failed: " + msg.err.Error())
 			return m, nil
+		}
+		if !m.hasWorkflows {
+			m.addLog(fmt.Sprintf("push OK — %s (no workflows)", shortSHA(m.trackedSHA)))
+			m.state = stateIdle
+			return m, fetchRepoState
 		}
 		m.state = stateMonitoring
 		m.addLog(fmt.Sprintf("push OK — monitoring workflow %q for %s",

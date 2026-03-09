@@ -23,6 +23,15 @@ func runGH(args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
+// -- Workflow detection ------------------------------------------------------
+
+// checkWorkflows reports whether the current repo has any tracked workflow
+// files under .github/workflows/.
+func checkWorkflows() tea.Msg {
+	out, _ := runGit("ls-files", ".github/workflows/")
+	return workflowsCheckMsg(strings.TrimSpace(out) != "")
+}
+
 // -- Workflow fetch -----------------------------------------------------------
 
 // fetchWorkflow queries GitHub Actions for the workflow run associated with sha.

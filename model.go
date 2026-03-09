@@ -29,6 +29,10 @@ type model struct {
 	packageName  string
 	artifactName string
 
+	// Whether the repo has .github/workflows/ files; set once at startup.
+	// When false, push-only mode is used (no workflow monitoring or install).
+	hasWorkflows bool
+
 	// GitHub Actions workflow data for the tracked SHA
 	workflow workflowRun
 
@@ -52,7 +56,7 @@ func initialModel(workflowName, packageName, artifactName string) model {
 
 func (m model) Init() tea.Cmd {
 	startGitWatcher()
-	return tea.Batch(fetchRepoState, tick(3*time.Second), waitForGitChange())
+	return tea.Batch(fetchRepoState, checkWorkflows, tick(3*time.Second), waitForGitChange())
 }
 
 // addLog appends a timestamped line to the activity log, capping at maxLogLines.
