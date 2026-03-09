@@ -120,7 +120,9 @@ func renderState(m model) string {
 	}
 }
 
-// renderWorkflow renders the workflow job/step tree.
+// renderWorkflow renders the workflow job list with minimal output.
+// Each job shows its status icon and name, with the currently running
+// step appended inline. Completed steps are not listed.
 func renderWorkflow(m model) string {
 	var b strings.Builder
 
@@ -148,23 +150,29 @@ func renderWorkflow(m model) string {
 
 	for _, job := range wr.Jobs {
 		jobIcon := renderStatusIcon(job.Status, job.Conclusion)
-		b.WriteString(fmt.Sprintf("  %s %s  %s\n",
+		activeStep := activeStepName(job.Steps)
+		stepSuffix := ""
+		if activeStep != "" {
+			stepSuffix = "  " + dimStyle.Render(activeStep)
+		}
+		b.WriteString(fmt.Sprintf("  %s %s%s\n",
 			jobIcon,
 			lipgloss.NewStyle().Bold(true).Render(job.Name),
-			dimStyle.Render(jobStatusLabel(job.Status, job.Conclusion))))
-
-		for _, step := range job.Steps {
-			if step.Status == "pending" {
-				continue // skip steps that haven't started yet
-			}
-			stepIcon := renderStatusIcon(step.Status, step.Conclusion)
-			b.WriteString(fmt.Sprintf("    %s %s\n",
-				stepIcon,
-				dimStyle.Render(step.Name)))
-		}
+			stepSuffix))
 	}
 
 	return b.String()
+}
+
+// activeStepName returns the name of the currently in_progress step,
+// or empty string if no step is actively running.
+func activeStepName(steps []workflowStep) string {
+	for _, s := range steps {
+		if s.Status == "in_progress" {
+			return s.Name
+		}
+	}
+	return ""
 }
 
 // renderInstallLog renders the adb install step log.
