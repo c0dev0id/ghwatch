@@ -29,6 +29,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 
+		// 'f' force-pushes after a push failure.
+		case "f":
+			if m.state == statePushFailed {
+				m.state = statePushing
+				m.addLog("force pushing " + shortSHA(m.trackedSHA) + "...")
+				return m, gitForcePush
+			}
+
+		// 'r' retries a normal push after a push failure.
+		case "r":
+			if m.state == statePushFailed {
+				m.state = statePushing
+				m.addLog("retrying push " + shortSHA(m.trackedSHA) + "...")
+				return m, gitPush
+			}
+
 		// 'i' manually triggers the APK install for the last successful workflow.
 		case "i":
 			if m.state == stateIdle &&
@@ -114,7 +130,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// -- Push result -----------------------------------------------------------
 	case gitPushMsg:
 		if msg.err != nil {
-			m.state = stateFailed
+			m.state = statePushFailed
+			m.pushErr = msg.err.Error()
 			m.addLog("push failed: " + msg.err.Error())
 			return m, nil
 		}

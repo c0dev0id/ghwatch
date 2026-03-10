@@ -12,6 +12,7 @@ const (
 	stateMonitoring                 // watching GitHub Actions workflow
 	stateInstalling                 // downloading + installing APK via adb
 	stateFailed                     // workflow or install failure
+	statePushFailed                 // push failed — waiting for user to choose f/r
 )
 
 func (s appState) String() string {
@@ -26,6 +27,8 @@ func (s appState) String() string {
 		return "installing"
 	case stateFailed:
 		return "failed"
+	case statePushFailed:
+		return "push failed"
 	default:
 		return "unknown"
 	}

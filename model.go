@@ -33,6 +33,10 @@ type model struct {
 	// When false, push-only mode is used (no workflow monitoring or install).
 	hasWorkflows bool
 
+	// pushErr holds the error message from the last failed push, displayed
+	// while in statePushFailed so the user can decide how to proceed.
+	pushErr string
+
 	// autoInstall is true when the current monitoring cycle was triggered by a
 	// push (so ghwatch should auto-install on success). It is false during the
 	// startup load and when the user manually triggers an install via 'i'.

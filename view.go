@@ -42,8 +42,15 @@ func (m model) View() string {
 
 	// -- Fixed footer lines (always visible) ---------------------------------
 	footerHint := "  Ctrl+C to quit"
-	if m.state == stateIdle && m.workflow.ID != 0 && m.workflow.Conclusion == "success" {
-		footerHint += dimStyle.Render("  ·  ") + runningStyle.Render("i") + dimStyle.Render(" to install")
+	switch m.state {
+	case stateIdle:
+		if m.workflow.ID != 0 && m.workflow.Conclusion == "success" {
+			footerHint += dimStyle.Render("  ·  ") + runningStyle.Render("i") + dimStyle.Render(" to install")
+		}
+	case statePushFailed:
+		footerHint += dimStyle.Render("  ·  ") +
+			runningStyle.Render("f") + dimStyle.Render(" force push  ·  ") +
+			runningStyle.Render("r") + dimStyle.Render(" retry")
 	}
 	footerLines := []string{
 		"",
@@ -212,6 +219,17 @@ func renderState(m model) string {
 	case stateInstalling:
 		return "  " + runningStyle.Render(spin) +
 			" installing APK for " + shaStyle.Render(shortSHA(m.trackedSHA)) + "..."
+
+	case statePushFailed:
+		hint := dimStyle.Render("  ·  ") +
+			runningStyle.Render("f") + dimStyle.Render(" force push  ") +
+			dimStyle.Render("·  ") +
+			runningStyle.Render("r") + dimStyle.Render(" retry")
+		errStr := ""
+		if m.pushErr != "" {
+			errStr = "\n  " + dimStyle.Render(m.pushErr)
+		}
+		return "  " + failStyle.Render("✗ push failed") + hint + errStr
 
 	case stateFailed:
 		return "  " + failStyle.Render("✗ failed") +

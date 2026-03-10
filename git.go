@@ -46,6 +46,11 @@ func gitPush() tea.Msg {
 	return gitPushMsg{err: err}
 }
 
+func gitForcePush() tea.Msg {
+	_, err := runGit("push", "--force")
+	return gitPushMsg{err: err}
+}
+
 // -- Helpers -----------------------------------------------------------------
 
 // parseSlug extracts "owner/repo" from a remote URL, supporting both HTTPS
