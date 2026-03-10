@@ -53,14 +53,15 @@ func runADB(args ...string) (string, error) {
 // -- APK helpers -------------------------------------------------------------
 
 // findAPK walks dir recursively, collects all .apk files, and returns the one
-// most likely to be a signed release build.  Scoring:
+// most likely to be a signed release build.
+//
+// APKs whose filename contains "debug" or "unsigned" are always rejected.
+// Among the remaining candidates, the highest scorer wins:
 //
 //	+10 "signed"
 //	 +5 "release"
-//	-10 "debug"
-//	 -3 "unsigned"
 //
-// When scores are equal the first file found wins.
+// Returns an error if no APKs are found or all candidates are debug/unsigned.
 func findAPK(dir string) (string, error) {
 	var all []string
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -72,6 +73,11 @@ func findAPK(dir string) (string, error) {
 	if len(all) == 0 {
 		return "", fmt.Errorf("no .apk file found in downloaded artifacts")
 	}
+
+	isReleaseBuild := func(p string) bool {
+		n := strings.ToLower(filepath.Base(p))
+		return !strings.Contains(n, "debug") && !strings.Contains(n, "unsigned")
+	}
 	score := func(p string) int {
 		n := strings.ToLower(filepath.Base(p))
 		s := 0
@@ -81,17 +87,26 @@ func findAPK(dir string) (string, error) {
 		if strings.Contains(n, "release") {
 			s += 5
 		}
-		if strings.Contains(n, "debug") {
-			s -= 10
-		}
-		if strings.Contains(n, "unsigned") {
-			s -= 3
-		}
 		return s
 	}
-	best := all[0]
-	bestScore := score(all[0])
-	for _, p := range all[1:] {
+
+	var candidates []string
+	var rejected []string
+	for _, p := range all {
+		if isReleaseBuild(p) {
+			candidates = append(candidates, p)
+		} else {
+			rejected = append(rejected, filepath.Base(p))
+		}
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no signed release APK found — rejected: %s",
+			strings.Join(rejected, ", "))
+	}
+
+	best := candidates[0]
+	bestScore := score(candidates[0])
+	for _, p := range candidates[1:] {
 		if s := score(p); s > bestScore {
 			bestScore = s
 			best = p
