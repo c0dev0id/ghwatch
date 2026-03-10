@@ -50,10 +50,13 @@ func runADB(args ...string) (string, error) {
 	return outStr, nil
 }
 
+// errNoDevice is returned by checkSingleDevice when no device is connected.
+// It is treated as a clean (non-error) stop by the install pipeline.
+var errNoDevice = fmt.Errorf("no device")
+
 // checkSingleDevice returns nil when exactly one ADB device is connected and
-// ready. It returns a descriptive error for zero or multiple devices so the
-// caller can surface it to the user rather than letting adb install pick
-// arbitrarily or fail with a confusing message.
+// ready. Returns errNoDevice for zero devices, or a descriptive error when
+// multiple devices are attached (ambiguous target).
 func checkSingleDevice() error {
 	out, err := runADB("devices")
 	if err != nil {
@@ -80,9 +83,9 @@ func checkSingleDevice() error {
 	case 1:
 		return nil
 	case 0:
-		return fmt.Errorf("no ADB device connected — connect a device and press 'i' to retry")
+		return errNoDevice
 	default:
-		return fmt.Errorf("multiple ADB devices connected (%s) — use 'adb -s <serial>' or disconnect extras",
+		return fmt.Errorf("multiple ADB devices connected (%s) — disconnect extras or use -s",
 			strings.Join(devices, ", "))
 	}
 }
@@ -655,6 +658,11 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 
 	// 5. Check exactly one device is connected before installing.
 	if err := checkSingleDevice(); err != nil {
+		if err == errNoDevice {
+			// No device attached — not an error, just nothing to do right now.
+			ch <- installProgressMsg{Done: true, FinalLog: log}
+			return
+		}
 		appendLog("✗  " + err.Error())
 		fail(err)
 		return
