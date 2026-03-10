@@ -544,13 +544,38 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 	if artifactName != "" {
 		appendLog(fmt.Sprintf("↓  artifact %q from run #%d", artifactName, runID))
 	} else {
-		appendLog(fmt.Sprintf("↓  all artifacts from run #%d", runID))
+		appendLog(fmt.Sprintf("↓  artifacts from run #%d", runID))
 	}
 	artifacts, err := listArtifacts(token, repoSlug, runID, artifactName)
 	if err != nil {
 		appendLog("✗  " + err.Error())
 		fail(err)
 		return
+	}
+
+	// When the user has not pinned a specific artifact, filter out anything
+	// whose name looks like a debug or unsigned build before downloading.
+	if artifactName == "" {
+		var release []artifactInfo
+		var skipped []string
+		for _, a := range artifacts {
+			n := strings.ToLower(a.Name)
+			if strings.Contains(n, "debug") || strings.Contains(n, "unsigned") {
+				skipped = append(skipped, a.Name)
+			} else {
+				release = append(release, a)
+			}
+		}
+		if len(skipped) > 0 {
+			appendLog(fmt.Sprintf("–  skipping debug/unsigned: %s", strings.Join(skipped, ", ")))
+		}
+		if len(release) == 0 {
+			err := fmt.Errorf("no release artifacts found — all skipped: %s", strings.Join(skipped, ", "))
+			appendLog("✗  " + err.Error())
+			fail(err)
+			return
+		}
+		artifacts = release
 	}
 
 	// 3. Download + extract each artifact into a single temp dir.
