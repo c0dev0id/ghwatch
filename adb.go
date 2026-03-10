@@ -50,6 +50,43 @@ func runADB(args ...string) (string, error) {
 	return outStr, nil
 }
 
+// checkSingleDevice returns nil when exactly one ADB device is connected and
+// ready. It returns a descriptive error for zero or multiple devices so the
+// caller can surface it to the user rather than letting adb install pick
+// arbitrarily or fail with a confusing message.
+func checkSingleDevice() error {
+	out, err := runADB("devices")
+	if err != nil {
+		return fmt.Errorf("adb devices: %v", err)
+	}
+	// Output format:
+	//   List of devices attached
+	//   emulator-5554	device
+	//   R38M123456	device
+	var devices []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "List of devices") {
+			continue
+		}
+		// Only count lines where the second field is "device" (not "offline",
+		// "unauthorized", "connecting", etc.).
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "device" {
+			devices = append(devices, fields[0])
+		}
+	}
+	switch len(devices) {
+	case 1:
+		return nil
+	case 0:
+		return fmt.Errorf("no ADB device connected — connect a device and press 'i' to retry")
+	default:
+		return fmt.Errorf("multiple ADB devices connected (%s) — use 'adb -s <serial>' or disconnect extras",
+			strings.Join(devices, ", "))
+	}
+}
+
 // -- APK helpers -------------------------------------------------------------
 
 // findAPK walks dir recursively, collects all .apk files, and returns the one
@@ -616,7 +653,14 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 	}
 	appendLog("✓  APK: " + filepath.Base(apkPath))
 
-	// 5. Install.
+	// 5. Check exactly one device is connected before installing.
+	if err := checkSingleDevice(); err != nil {
+		appendLog("✗  " + err.Error())
+		fail(err)
+		return
+	}
+
+	// 6. Install.
 	appendLog("⟳  adb install -r " + filepath.Base(apkPath))
 	if out, err := runADB("install", "-r", apkPath); err != nil {
 		appendLog("✗  " + err.Error())
@@ -630,7 +674,7 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 		}
 	}
 
-	// 6. Resolve package name (from manifest if not provided).
+	// 7. Resolve package name (from manifest if not provided).
 	pkg := packageName
 	if pkg == "" {
 		if p, err := readPackageFromManifest(apkPath); err != nil {
@@ -641,7 +685,7 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 		}
 	}
 
-	// 7. Launch.
+	// 8. Launch.
 	if pkg == "" {
 		appendLog("–  launch skipped (package unknown)")
 		ch <- installProgressMsg{Done: true, FinalLog: log}
