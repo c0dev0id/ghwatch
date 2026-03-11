@@ -26,3 +26,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real download progress bar using direct GitHub API artifact download (streams bytes via `net/http`), rendered as `[████░░░░] 61%  12.3 MB / 20.1 MB`
 - Height-aware TUI layout: title bar, state line, and footer are always pinned; workflow, install, and activity sections share the remaining terminal height so the header never scrolls off-screen
 - Minimal workflow job output: each job shows its status icon and name with the currently running step appended inline; completed steps are not listed
+- `--discover` flag: scans `.github/workflows/` and prints each workflow's display name together with the artifact names produced by `actions/upload-artifact` steps, then exits
+- `--auto` flag: after each successful workflow run behave as if the user pressed `i` — installs directly when `--artifact` is also specified, or opens the artifact picker when it is not

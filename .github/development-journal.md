@@ -18,8 +18,16 @@ lower-level helpers (adb.go, github.go, gitwatch*.go) with vibeDev but omits
 all file-browser and interactive navigation UI. It is a separate module
 (`ghwatch`) in its own repo.
 
-**Full auto-mode only.** There is no manual trigger or interactive cursor.
-The tool starts, watches, and acts. The only user interaction is Ctrl+C to quit.
+**`--auto` decoupled from `--artifact`.** Whether to auto-act after a
+successful workflow run is controlled by `--auto`. Whether to install a
+specific artifact is controlled by `--artifact`. Combining them installs
+directly; `--auto` alone opens the picker; neither flag means display-only.
+The `autoInstall` field is set from `autoFlag`, not from `artifactName != ""`.
+
+**`--discover` for self-documentation.** Running `ghwatch --discover` scans
+`.github/workflows/` with a line-based YAML parser (no dependency) and prints
+each workflow's display name and the artifact names it produces. Useful for
+figuring out the right `--workflow` and `--artifact` values to pass.
 
 **Single state machine (`appState`).** The app cycles through
 `idle → pushing → monitoring → installing` and resets to `idle` on success.
@@ -56,3 +64,5 @@ without external tools; launch falls back to `adb shell monkey` in that case.
 - **APK install**: downloads artifact with `gh run download`, selects signed APK, installs with `adb install -r`, launches app
 - **Failure reporting**: on workflow failure, displays run ID and URL for copy-paste
 - **Rolling activity log**: timestamped audit trail of every action inside the TUI
+- **`--discover`**: scans `.github/workflows/` and prints workflow names + produced artifact names, then exits
+- **`--auto`**: auto-installs (or opens artifact picker) after each successful run, equivalent to pressing `i` manually
