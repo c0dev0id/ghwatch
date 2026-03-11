@@ -27,14 +27,16 @@ type model struct {
 	// Configuration (from CLI flags)
 	workflowName string
 	packageName  string
-	artifactName string // empty = display-only mode; non-empty = auto-install after build
+	artifactName string // empty = no pinned artifact; non-empty = install this artifact directly
+	autoFlag     bool   // --auto: behave as if user pressed 'i' after each successful run
 
 	// Whether the repo has .github/workflows/ files; set once at startup.
 	// When false, push-only mode is used (no workflow monitoring or install).
 	hasWorkflows bool
 
 	// autoInstall is true when the current monitoring cycle should auto-install
-	// on success. Set only when a push completes AND --artifact is specified.
+	// (or auto-open the picker) on success. Set when a push/external-push
+	// completes AND --auto is active.
 	autoInstall bool
 
 	// GitHub Actions workflow data for the tracked SHA
@@ -66,11 +68,12 @@ type model struct {
 	activityLog []string
 }
 
-func initialModel(workflowName, packageName, artifactName string) model {
+func initialModel(workflowName, packageName, artifactName string, autoFlag bool) model {
 	return model{
 		workflowName:      workflowName,
 		packageName:       packageName,
 		artifactName:      artifactName,
+		autoFlag:          autoFlag,
 		installProgressCh: make(chan installProgressMsg, 64),
 	}
 }

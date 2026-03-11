@@ -58,7 +58,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Number keys — select an artifact in the picker.
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			if m.state == stateSelectingArtifact && len(m.artifactList) > 0 {
-				idx := int(msg.String()[0]-'1')
+				idx := int(msg.String()[0] - '1')
 				if idx < len(m.artifactList) {
 					chosen := m.artifactList[idx]
 					m.state = stateInstalling
@@ -126,7 +126,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.trackedSHA = m.repo.HeadSHA
 				m.workflow = workflowRun{}
 				m.state = stateMonitoring
-				m.autoInstall = m.artifactName != ""
+				m.autoInstall = m.autoFlag
 				m.addLog(fmt.Sprintf("push resolved — monitoring %s", shortSHA(m.trackedSHA)))
 				cmds = append(cmds, fetchWorkflow(m.workflowName, m.trackedSHA, 0))
 				return m, tea.Batch(cmds...)
@@ -164,7 +164,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.trackedSHA = m.repo.HeadSHA
 			m.workflow = workflowRun{}
 			m.installLog = nil
-			m.autoInstall = m.artifactName != ""
+			m.autoInstall = m.autoFlag
 			m.state = stateMonitoring
 			m.addLog(fmt.Sprintf("external push detected, monitoring %s", shortSHA(m.trackedSHA)))
 			cmds = append(cmds, fetchWorkflow(m.workflowName, m.trackedSHA, 0))
@@ -201,7 +201,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateIdle
 			return m, fetchRepoState
 		}
-		m.autoInstall = m.artifactName != ""
+		m.autoInstall = m.autoFlag
 		m.state = stateMonitoring
 		m.addLog(fmt.Sprintf("push OK — monitoring %q for %s",
 			m.workflowName, shortSHA(m.trackedSHA)))
@@ -226,14 +226,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if wr.Conclusion == "success" {
 			if m.autoInstall {
-				m.state = stateInstalling
-				m.installLog = nil
-				m.downloadedBytes = 0
-				m.totalBytes = 0
-				m.addLog(fmt.Sprintf("workflow OK (run #%d) — installing", wr.ID))
-				go installToChannel(wr.ID, m.trackedSHA, m.repo.Slug,
-					m.packageName, m.artifactName, m.installProgressCh)
-				return m, waitForInstallProgress(m.installProgressCh)
+				if m.artifactName != "" {
+					// Artifact pinned via --artifact — install directly.
+					m.state = stateInstalling
+					m.installLog = nil
+					m.downloadedBytes = 0
+					m.totalBytes = 0
+					m.addLog(fmt.Sprintf("workflow OK (run #%d) — installing", wr.ID))
+					go installToChannel(wr.ID, m.trackedSHA, m.repo.Slug,
+						m.packageName, m.artifactName, m.installProgressCh)
+					return m, waitForInstallProgress(m.installProgressCh)
+				}
+				// --auto without --artifact — open picker (same as pressing 'i').
+				m.addLog(fmt.Sprintf("workflow OK (run #%d) — select artifact", wr.ID))
+				m.state = stateSelectingArtifact
+				m.artifactList = nil
+				return m, fetchArtifactListCmd(m.repo.Slug, wr.ID)
 			}
 			// Display-only mode: inform and go idle.
 			m.addLog(fmt.Sprintf("workflow OK (run #%d)%s",

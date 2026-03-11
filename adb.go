@@ -196,12 +196,12 @@ func readPackageFromManifest(apkPath string) (string, error) {
 // and the first START_ELEMENT (always <manifest>) to extract the package attr.
 
 const (
-	axmlChunkXML         = 0x0003
-	axmlChunkStringPool  = 0x0001
-	axmlChunkResMap      = 0x0180
-	axmlChunkStartElem   = 0x0102
-	axmlFlagUTF8         = 0x100
-	axmlTypeString       = 0x03
+	axmlChunkXML        = 0x0003
+	axmlChunkStringPool = 0x0001
+	axmlChunkResMap     = 0x0180
+	axmlChunkStartElem  = 0x0102
+	axmlFlagUTF8        = 0x100
+	axmlTypeString      = 0x03
 )
 
 // axmlPackage parses a binary AXML blob and returns the package attribute of
@@ -434,9 +434,9 @@ func listArtifacts(token, repoSlug string, runID int, name string) ([]artifactIn
 
 	var body struct {
 		Artifacts []struct {
-			ID           int    `json:"id"`
-			Name         string `json:"name"`
-			SizeInBytes  int64  `json:"size_in_bytes"`
+			ID          int    `json:"id"`
+			Name        string `json:"name"`
+			SizeInBytes int64  `json:"size_in_bytes"`
 		} `json:"artifacts"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -769,4 +769,3 @@ func waitForInstallProgress(ch <-chan installProgressMsg) tea.Cmd {
 		return <-ch
 	}
 }
-

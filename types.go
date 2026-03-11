@@ -75,13 +75,14 @@ type workflowRun struct {
 
 // -- Message types -----------------------------------------------------------
 
-type repoStateMsg      repoState
-type workflowRunMsg    workflowRun
-type tickMsg           time.Time
-type gitPushMsg        struct{ err error }
-type gitChangeMsg      struct{}
+type repoStateMsg repoState
+type workflowRunMsg workflowRun
+type tickMsg time.Time
+type gitPushMsg struct{ err error }
+type gitChangeMsg struct{}
 type workflowsCheckMsg bool // true = repo has .github/workflows/ files
-type pushReadyMsg      struct{}
+type pushReadyMsg struct{}
+
 // artifactListMsg carries the result of a GitHub artifact list fetch.
 type artifactListMsg struct {
 	Artifacts []artifactInfo
