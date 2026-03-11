@@ -68,7 +68,7 @@ func discoverWorkflows() {
 
 		fmt.Printf("  %-28s  run #%d\n", name, runNum)
 		for _, a := range artifacts {
-			fmt.Printf("    --artifact %-20s  %s\n", a.Name, discoverFmtSize(a.Size))
+			fmt.Printf("    %-30s  %s\n", a.Name, discoverFmtSize(a.Size))
 		}
 	}
 }
