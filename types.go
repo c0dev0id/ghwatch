@@ -11,7 +11,6 @@ const (
 	statePushing                           // git push in progress
 	stateMonitoring                        // watching GitHub Actions workflow
 	stateInstalling                        // downloading + installing APK via adb
-	stateFailed                            // workflow or install failure
 	statePushFailed                        // push failed — watching for HEAD change
 	stateSelectingArtifact                 // showing artifact picker, waiting for user choice
 )
@@ -26,8 +25,6 @@ func (s appState) String() string {
 		return "monitoring"
 	case stateInstalling:
 		return "installing"
-	case stateFailed:
-		return "failed"
 	case statePushFailed:
 		return "push failed"
 	case stateSelectingArtifact:

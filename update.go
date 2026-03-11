@@ -33,7 +33,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// With --artifact: install directly.
 		// Without --artifact: open artifact picker to let user choose.
 		case "i":
-			if m.state == stateIdle || m.state == stateFailed {
+			if m.state == stateIdle {
 				if m.workflow.ID == 0 || m.workflow.Conclusion != "success" {
 					break
 				}
@@ -94,7 +94,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pollTick = (m.pollTick + 1) % pollEvery
 		cmds := []tea.Cmd{tick(tickInterval)}
 		switch m.state {
-		case stateIdle, stateFailed, statePushFailed:
+		case stateIdle, statePushFailed:
 			// Poll repo state to catch new commits even without inotify.
 			cmds = append(cmds, fetchRepoState)
 		case stateMonitoring:
@@ -141,7 +141,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// -- Normal push trigger ------------------------------------------------
-		if (m.state == stateIdle || m.state == stateFailed) && m.repo.Ahead > 0 {
+		if m.state == stateIdle && m.repo.Ahead > 0 {
 			m.state = statePushing
 			m.trackedSHA = m.repo.HeadSHA
 			m.workflow = workflowRun{}
@@ -160,7 +160,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.repo.HeadSHA != m.trackedSHA &&
 			m.trackedSHA != "" &&
 			m.hasWorkflows &&
-			(m.state == stateIdle || m.state == stateFailed || m.state == stateMonitoring) {
+			(m.state == stateIdle || m.state == stateMonitoring) {
 			m.trackedSHA = m.repo.HeadSHA
 			m.workflow = workflowRun{}
 			m.installLog = nil
@@ -250,8 +250,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchRepoState
 		}
 
-		// Workflow failed.
-		m.state = stateFailed
+		// Workflow failed — go idle; the job/step tree already shows the details.
+		m.state = stateIdle
 		m.addLog(fmt.Sprintf("workflow failed (run #%d)", wr.ID))
 		return m, nil
 
@@ -291,7 +291,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalBytes = 0
 		m.autoInstall = false
 		if msg.Err != nil {
-			m.state = stateFailed
+			m.state = stateIdle
 			m.addLog("install failed")
 		} else {
 			m.addLog("install complete ✓")

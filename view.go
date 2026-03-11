@@ -43,7 +43,7 @@ func (m model) View() string {
 	// -- Fixed footer lines (always visible) ---------------------------------
 	footerHint := "  Ctrl+C to quit"
 	switch m.state {
-	case stateIdle, stateFailed:
+	case stateIdle:
 		if m.workflow.ID != 0 && m.workflow.Conclusion == "success" {
 			footerHint += "  ·  " + runningStyle.Render("i") + dimStyle.Render(" to install")
 		}
@@ -245,10 +245,6 @@ func renderState(m model) string {
 	case stateInstalling:
 		return "  " + runningStyle.Render(spin) +
 			" installing APK for " + shaStyle.Render(shortSHA(m.trackedSHA)) + "..."
-
-	case stateFailed:
-		return "  " + failStyle.Render("✗ failed") +
-			dimStyle.Render(" — fix the issue and commit to retry")
 
 	default:
 		return "  " + dimStyle.Render(m.state.String())
