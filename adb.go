@@ -708,18 +708,13 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 	}
 
 	// 6. Install.
-	appendLog("⟳  adb install -r " + filepath.Base(apkPath))
-	if out, err := runADB("install", "-r", apkPath); err != nil {
-		appendLog("✗  " + err.Error())
+	appendLog("⟳  installing " + filepath.Base(apkPath))
+	if _, err := runADB("install", "-r", apkPath); err != nil {
+		appendLog("✗  install failed: " + err.Error())
 		fail(fmt.Errorf("adb install: %v", err))
 		return
-	} else {
-		for _, l := range strings.Split(out, "\n") {
-			if l = strings.TrimSpace(l); l != "" {
-				appendLog("   " + l)
-			}
-		}
 	}
+	appendLog("✓  installed")
 
 	// 7. Resolve package name (from manifest if not provided).
 	pkg := packageName
@@ -739,24 +734,19 @@ func installToChannel(runID int, sha, repoSlug, packageName, artifactName string
 		return
 	}
 
+	appendLog("⟳  launching " + pkg)
 	if strings.Contains(pkg, "/") {
-		appendLog("⟳  adb shell am start -n " + pkg)
-		if out, err := runADB("shell", "am", "start", "-n", pkg); err != nil {
-			appendLog("✗  " + err.Error()) // launch failure is non-fatal
+		if _, err := runADB("shell", "am", "start", "-n", pkg); err != nil {
+			appendLog("✗  launch failed: " + err.Error()) // non-fatal
 		} else {
-			for _, l := range strings.Split(out, "\n") {
-				if l = strings.TrimSpace(l); l != "" {
-					appendLog("   " + l)
-				}
-			}
+			appendLog("✓  launched")
 		}
 	} else {
-		appendLog("⟳  adb shell monkey -p " + pkg)
-		if out, err := runADB("shell", "monkey", "-p", pkg,
+		if _, err := runADB("shell", "monkey", "-p", pkg,
 			"-c", "android.intent.category.LAUNCHER", "1"); err != nil {
-			appendLog("✗  " + err.Error())
-		} else if out != "" {
-			appendLog("   " + out)
+			appendLog("✗  launch failed: " + err.Error())
+		} else {
+			appendLog("✓  launched")
 		}
 	}
 
