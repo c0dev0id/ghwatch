@@ -81,18 +81,18 @@ func lastSuccessfulRunID(workflowName string) (id, number int, err error) {
 		"--workflow", workflowName,
 		"--status", "success",
 		"--limit", "1",
-		"--json", "databaseId,runNumber")
+		"--json", "databaseId,number")
 	if err != nil {
 		return 0, 0, err
 	}
 	var runs []struct {
 		DatabaseId int `json:"databaseId"`
-		RunNumber  int `json:"runNumber"`
+		Number     int `json:"number"`
 	}
 	if err := json.Unmarshal([]byte(out), &runs); err != nil || len(runs) == 0 {
 		return 0, 0, nil
 	}
-	return runs[0].DatabaseId, runs[0].RunNumber, nil
+	return runs[0].DatabaseId, runs[0].Number, nil
 }
 
 // discoverFmtSize formats a byte count as a human-readable string.
