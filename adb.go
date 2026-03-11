@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// httpClient is used for all GitHub/S3 requests. The 5-minute timeout
+// prevents a stalled download from hanging the install goroutine forever.
+var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
 // -- Low-level runner --------------------------------------------------------
 
@@ -52,7 +58,7 @@ func runADB(args ...string) (string, error) {
 
 // errNoDevice is returned by checkSingleDevice when no device is connected.
 // It is treated as a clean (non-error) stop by the install pipeline.
-var errNoDevice = fmt.Errorf("no device")
+var errNoDevice = errors.New("no device")
 
 // checkSingleDevice returns nil when exactly one ADB device is connected and
 // ready. Returns errNoDevice for zero devices, or a descriptive error when
@@ -395,10 +401,11 @@ func axmlReadUTF8(data []byte, off int) string {
 
 // -- GitHub artifact download ------------------------------------------------
 
-// artifactInfo holds the ID and name of one GitHub Actions artifact.
+// artifactInfo holds the metadata of one GitHub Actions artifact.
 type artifactInfo struct {
 	ID   int
 	Name string
+	Size int64 // size in bytes as reported by the API
 }
 
 // getGHToken retrieves the active GitHub token via the gh CLI.
@@ -419,7 +426,7 @@ func listArtifacts(token, repoSlug string, runID int, name string) ([]artifactIn
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -427,8 +434,9 @@ func listArtifacts(token, repoSlug string, runID int, name string) ([]artifactIn
 
 	var body struct {
 		Artifacts []struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
+			ID           int    `json:"id"`
+			Name         string `json:"name"`
+			SizeInBytes  int64  `json:"size_in_bytes"`
 		} `json:"artifacts"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -438,7 +446,7 @@ func listArtifacts(token, repoSlug string, runID int, name string) ([]artifactIn
 	var out []artifactInfo
 	for _, a := range body.Artifacts {
 		if name == "" || a.Name == name {
-			out = append(out, artifactInfo{ID: a.ID, Name: a.Name})
+			out = append(out, artifactInfo{ID: a.ID, Name: a.Name, Size: a.SizeInBytes})
 		}
 	}
 	if len(out) == 0 {
@@ -472,6 +480,7 @@ func (pr *progressReader) Read(p []byte) (n int, err error) {
 func downloadArtifactZip(token, repoSlug string, artifactID int, ch chan<- installProgressMsg) (string, error) {
 	// Step 1: ask the API for the redirect URL (302 → signed S3 URL).
 	noFollow := &http.Client{
+		Timeout: httpClient.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -494,7 +503,7 @@ func downloadArtifactZip(token, repoSlug string, artifactID int, ch chan<- insta
 	}
 
 	// Step 2: stream from S3 with progress tracking.
-	resp2, err := http.Get(s3URL) //nolint:noctx — best-effort download
+	resp2, err := httpClient.Get(s3URL)
 	if err != nil {
 		return "", fmt.Errorf("download: %v", err)
 	}
@@ -529,7 +538,12 @@ func extractZip(zipPath, dir string) error {
 	defer zr.Close()
 
 	for _, f := range zr.File {
-		outPath := filepath.Join(dir, f.Name)
+		outPath := filepath.Join(dir, filepath.Clean(f.Name))
+		// Guard against zip-slip: ensure the target is inside dir.
+		if !strings.HasPrefix(outPath, filepath.Clean(dir)+string(os.PathSeparator)) &&
+			outPath != filepath.Clean(dir) {
+			continue // skip suspicious entry
+		}
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(outPath, 0755) //nolint:errcheck
 			continue
@@ -552,6 +566,31 @@ func extractZip(zipPath, dir string) error {
 		}
 	}
 	return nil
+}
+
+// -- Artifact list -----------------------------------------------------------
+
+// fetchArtifactListCmd returns a Cmd that lists the non-debug artifacts for a
+// workflow run and sends back an artifactListMsg.
+func fetchArtifactListCmd(repoSlug string, runID int) tea.Cmd {
+	return func() tea.Msg {
+		token, err := getGHToken()
+		if err != nil {
+			return artifactListMsg{Err: err}
+		}
+		all, err := listArtifacts(token, repoSlug, runID, "")
+		if err != nil {
+			return artifactListMsg{Err: err}
+		}
+		var release []artifactInfo
+		for _, a := range all {
+			n := strings.ToLower(a.Name)
+			if !strings.Contains(n, "debug") && !strings.Contains(n, "unsigned") {
+				release = append(release, a)
+			}
+		}
+		return artifactListMsg{Artifacts: release}
+	}
 }
 
 // -- Install pipeline --------------------------------------------------------

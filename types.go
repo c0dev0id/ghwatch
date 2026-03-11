@@ -7,12 +7,13 @@ import "time"
 type appState int
 
 const (
-	stateIdle       appState = iota // watching for new commits
-	statePushing                    // git push in progress
-	stateMonitoring                 // watching GitHub Actions workflow
-	stateInstalling                 // downloading + installing APK via adb
-	stateFailed                     // workflow or install failure
-	statePushFailed                 // push failed — waiting for user to choose f/r
+	stateIdle              appState = iota // watching for new commits
+	statePushing                           // git push in progress
+	stateMonitoring                        // watching GitHub Actions workflow
+	stateInstalling                        // downloading + installing APK via adb
+	stateFailed                            // workflow or install failure
+	statePushFailed                        // push failed — watching for HEAD change
+	stateSelectingArtifact                 // showing artifact picker, waiting for user choice
 )
 
 func (s appState) String() string {
@@ -29,6 +30,8 @@ func (s appState) String() string {
 		return "failed"
 	case statePushFailed:
 		return "push failed"
+	case stateSelectingArtifact:
+		return "selecting artifact"
 	default:
 		return "unknown"
 	}
@@ -78,7 +81,13 @@ type tickMsg           time.Time
 type gitPushMsg        struct{ err error }
 type gitChangeMsg      struct{}
 type workflowsCheckMsg bool // true = repo has .github/workflows/ files
-type pushReadyMsg       struct{} // fired after the pre-push delay elapses
+type pushReadyMsg      struct{}
+// artifactListMsg carries the result of a GitHub artifact list fetch.
+type artifactListMsg struct {
+	Artifacts []artifactInfo
+	Err       error
+}
+
 // installProgressMsg is sent repeatedly while an install is in progress.
 // When Done is true the install has finished (check Err for failure).
 type installProgressMsg struct {

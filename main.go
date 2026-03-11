@@ -9,12 +9,20 @@ import (
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: ghwatch [options]\n\nOptions:\n")
+		flag.VisitAll(func(f *flag.Flag) {
+			fmt.Fprintf(flag.CommandLine.Output(),
+				"  --%-14s %s\n", f.Name, f.Usage)
+		})
+	}
+
 	workflow := flag.String("workflow", "Build",
-		"GitHub Actions workflow name to monitor")
+		"GitHub Actions workflow name to monitor (default: Build)")
 	pkg := flag.String("package", "",
-		"Android package/component for launch after install (e.g. com.example.app or com.example.app/.MainActivity); auto-detected from manifest if omitted")
+		"Android package for launch after install (e.g. com.example.app or com.example.app/.MainActivity); auto-detected from manifest if omitted")
 	artifact := flag.String("artifact", "",
-		"GitHub Actions artifact name to download for install (e.g. app-signed); downloads all artifacts if omitted")
+		"Artifact name to download and install (e.g. app-release-signed); omit to display workflow status only")
 	flag.Parse()
 
 	p := tea.NewProgram(initialModel(*workflow, *pkg, *artifact), tea.WithAltScreen())

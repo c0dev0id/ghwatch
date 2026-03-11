@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// View renders the full TUI with a fixed title and footer, and a
+// View renders the full TUI with pinned title and footer, and a
 // height-bounded body so content never pushes the title off-screen.
 func (m model) View() string {
 	w := m.width
@@ -43,14 +43,14 @@ func (m model) View() string {
 	// -- Fixed footer lines (always visible) ---------------------------------
 	footerHint := "  Ctrl+C to quit"
 	switch m.state {
-	case stateIdle:
+	case stateIdle, stateFailed:
 		if m.workflow.ID != 0 && m.workflow.Conclusion == "success" {
-			footerHint += dimStyle.Render("  ·  ") + runningStyle.Render("i") + dimStyle.Render(" to install")
+			footerHint += "  ·  " + runningStyle.Render("i") + dimStyle.Render(" to install")
 		}
-	case statePushFailed:
-		footerHint += dimStyle.Render("  ·  ") +
-			runningStyle.Render("f") + dimStyle.Render(" force push  ·  ") +
-			runningStyle.Render("r") + dimStyle.Render(" retry")
+	case stateSelectingArtifact:
+		if len(m.artifactList) > 0 {
+			footerHint += "  ·  " + dimStyle.Render("number to select  ·  Esc to cancel")
+		}
 	}
 	footerLines := []string{
 		"",
@@ -61,30 +61,30 @@ func (m model) View() string {
 	// -- Variable body sections ----------------------------------------------
 	workflowLines := workflowSectionLines(m)
 	installLines := installSectionLines(m)
-	activityLines := activitySectionLines(m)
+	activityLines := activitySectionLines(m, w)
+	pickerLines := artifactPickerLines(m)
 
-	// Calculate how many lines the body sections can occupy.
+	// Height budget for variable body sections.
 	budget := m.height - len(topLines) - len(footerLines)
 	if budget < 0 {
 		budget = 0
 	}
 
-	// Allocate budget: workflow and install each get up to 1/3 of budget,
-	// activity gets the rest (showing the most recent lines).
 	third := budget / 3
-
 	wAlloc := min(len(workflowLines), third)
 	iAlloc := min(len(installLines), third)
-	aAlloc := budget - wAlloc - iAlloc
+	pAlloc := min(len(pickerLines), third)
+	aAlloc := min(len(activityLines), budget-wAlloc-iAlloc-pAlloc)
 	if aAlloc < 0 {
 		aAlloc = 0
 	}
-	aAlloc = min(len(activityLines), aAlloc)
 
-	// Build final line list.
 	var lines []string
 	lines = append(lines, topLines...)
-
+	if pAlloc > 0 {
+		lines = append(lines, "")
+		lines = append(lines, pickerLines[:pAlloc]...)
+	}
 	if wAlloc > 0 {
 		lines = append(lines, "")
 		lines = append(lines, workflowLines[:wAlloc]...)
@@ -95,23 +95,20 @@ func (m model) View() string {
 	}
 	if aAlloc > 0 {
 		lines = append(lines, "")
-		// Show the most recent lines (tail) when the section is clamped.
 		tail := activityLines[len(activityLines)-aAlloc:]
 		lines = append(lines, tail...)
 	}
-
 	lines = append(lines, footerLines...)
 
 	return strings.Join(lines, "\n")
 }
 
-// workflowSectionLines returns the workflow section as a slice of lines,
-// or nil if there is nothing to show.
+// -- Section renderers -------------------------------------------------------
+
 func workflowSectionLines(m model) []string {
 	if m.workflow.ID == 0 && m.state != stateMonitoring {
 		return nil
 	}
-
 	wr := m.workflow
 	var headerStatus string
 	if wr.ID == 0 {
@@ -119,19 +116,16 @@ func workflowSectionLines(m model) []string {
 	} else {
 		headerStatus = renderStatus(wr.Status, wr.Conclusion)
 	}
-
 	var lines []string
 	lines = append(lines, sectionHeaderStyle.Render("Workflow")+
 		" "+dimStyle.Render(m.workflowName)+
 		"  "+headerStatus)
-
 	if wr.URL != "" && wr.Status == "completed" && wr.Conclusion != "success" {
 		lines = append(lines, "  "+dimStyle.Render("url: ")+wr.URL)
 		if wr.ID != 0 {
 			lines = append(lines, "  "+dimStyle.Render(fmt.Sprintf("run id: %d", wr.ID)))
 		}
 	}
-
 	for _, job := range wr.Jobs {
 		jobIcon := renderStatusIcon(job.Status, job.Conclusion)
 		activeStep := activeStepName(job.Steps)
@@ -144,17 +138,13 @@ func workflowSectionLines(m model) []string {
 			lipgloss.NewStyle().Bold(true).Render(job.Name),
 			stepSuffix))
 	}
-
 	return lines
 }
 
-// installSectionLines returns the install section as a slice of lines,
-// or nil if there is nothing to show.
 func installSectionLines(m model) []string {
 	if len(m.installLog) == 0 && m.downloadedBytes == 0 && m.totalBytes == 0 {
 		return nil
 	}
-
 	var lines []string
 	lines = append(lines, sectionHeaderStyle.Render("Install"))
 	for _, line := range m.installLog {
@@ -166,37 +156,65 @@ func installSectionLines(m model) []string {
 	return lines
 }
 
-// activitySectionLines returns the activity log section as a slice of lines,
-// or nil if there is nothing to show. The first line is always the header.
-func activitySectionLines(m model) []string {
+// activitySectionLines returns the activity log. Lines are clipped to w
+// characters to prevent wrapping on narrow terminals.
+func activitySectionLines(m model, w int) []string {
 	if len(m.activityLog) == 0 {
 		return nil
+	}
+	maxLine := w - 4 // 2 indent + 2 margin
+	if maxLine < 10 {
+		maxLine = 10
 	}
 	var lines []string
 	lines = append(lines, sectionHeaderStyle.Render("Activity"))
 	for _, l := range m.activityLog {
-		lines = append(lines, logStyle.Render("  "+l))
+		display := "  " + l
+		if len(display) > maxLine {
+			display = display[:maxLine-1] + "…"
+		}
+		lines = append(lines, logStyle.Render(display))
 	}
 	return lines
 }
 
-// min returns the smaller of a and b.
-func min(a, b int) int {
-	if a < b {
-		return a
+// artifactPickerLines renders the artifact selection UI.
+func artifactPickerLines(m model) []string {
+	if m.state != stateSelectingArtifact {
+		return nil
 	}
-	return b
+	var lines []string
+	if len(m.artifactList) == 0 {
+		lines = append(lines, sectionHeaderStyle.Render("Select artifact")+
+			"  "+runningStyle.Render(spinnerFrames[m.spinner])+" loading...")
+		return lines
+	}
+	lines = append(lines, sectionHeaderStyle.Render("Select artifact"))
+	for i, a := range m.artifactList {
+		if i >= 9 {
+			break
+		}
+		sizeStr := ""
+		if a.Size > 0 {
+			sizeStr = "  " + dimStyle.Render(formatBytes(a.Size))
+		}
+		lines = append(lines, fmt.Sprintf("  %s  %s%s",
+			runningStyle.Render(fmt.Sprintf("%d", i+1)),
+			a.Name,
+			sizeStr))
+	}
+	return lines
 }
 
-// renderState renders the current state indicator line.
+// -- State line --------------------------------------------------------------
+
 func renderState(m model) string {
 	spin := spinnerFrames[m.spinner]
 	switch m.state {
 	case stateIdle:
 		if m.repo.Ahead == 0 && m.trackedSHA != "" {
-			// Just finished — show the SHA we last processed.
 			return "  " + successStyle.Render("✓") + dimStyle.Render(
-				fmt.Sprintf(" idle — last processed %s", shortSHA(m.trackedSHA)))
+				" idle — last: "+shortSHA(m.trackedSHA))
 		}
 		return "  " + idleStyle.Render("● idle — watching for new commits")
 
@@ -204,10 +222,14 @@ func renderState(m model) string {
 		return "  " + runningStyle.Render(spin) +
 			" pushing " + shaStyle.Render(shortSHA(m.trackedSHA)) + "..."
 
+	case statePushFailed:
+		return "  " + failStyle.Render("✗ push failed") +
+			dimStyle.Render(" — commit a fix to continue")
+
 	case stateMonitoring:
 		waitingStr := ""
 		if m.workflow.ID == 0 {
-			waitingStr = dimStyle.Render(" (waiting for run to appear...)")
+			waitingStr = dimStyle.Render(" (waiting for run...)")
 		} else {
 			waitingStr = dimStyle.Render(fmt.Sprintf(" run #%d", m.workflow.ID))
 		}
@@ -216,20 +238,13 @@ func renderState(m model) string {
 				m.workflowName, shaStyle.Render(shortSHA(m.trackedSHA))) +
 			waitingStr
 
+	case stateSelectingArtifact:
+		return "  " + runningStyle.Render(spin) +
+			dimStyle.Render(fmt.Sprintf(" select artifact to install (run #%d)", m.workflow.ID))
+
 	case stateInstalling:
 		return "  " + runningStyle.Render(spin) +
 			" installing APK for " + shaStyle.Render(shortSHA(m.trackedSHA)) + "..."
-
-	case statePushFailed:
-		hint := dimStyle.Render("  ·  ") +
-			runningStyle.Render("f") + dimStyle.Render(" force push  ") +
-			dimStyle.Render("·  ") +
-			runningStyle.Render("r") + dimStyle.Render(" retry")
-		errStr := ""
-		if m.pushErr != "" {
-			errStr = "\n  " + dimStyle.Render(m.pushErr)
-		}
-		return "  " + failStyle.Render("✗ push failed") + hint + errStr
 
 	case stateFailed:
 		return "  " + failStyle.Render("✗ failed") +
@@ -240,8 +255,8 @@ func renderState(m model) string {
 	}
 }
 
-// activeStepName returns the name of the currently in_progress step,
-// or empty string if no step is actively running.
+// -- Helpers -----------------------------------------------------------------
+
 func activeStepName(steps []workflowStep) string {
 	for _, s := range steps {
 		if s.Status == "in_progress" {
@@ -251,10 +266,6 @@ func activeStepName(steps []workflowStep) string {
 	return ""
 }
 
-// renderProgressBar renders a compact progress bar.
-//
-//	[████████████░░░░░░░░]  61%  12.3 MB / 20.1 MB
-//	[▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒]  4.2 MB  (size unknown)
 func renderProgressBar(downloaded, total int64, barWidth int) string {
 	if total > 0 {
 		pct := float64(downloaded) / float64(total)
@@ -266,12 +277,10 @@ func renderProgressBar(downloaded, total int64, barWidth int) string {
 		return runningStyle.Render(fmt.Sprintf("[%s]  %3.0f%%  %s / %s",
 			bar, pct*100, formatBytes(downloaded), formatBytes(total)))
 	}
-	// Unknown total — show bytes downloaded with a placeholder bar.
 	bar := strings.Repeat("▒", barWidth)
 	return runningStyle.Render(fmt.Sprintf("[%s]  %s", bar, formatBytes(downloaded)))
 }
 
-// formatBytes formats a byte count as a human-readable string (e.g. "4.2 MB").
 func formatBytes(b int64) string {
 	const unit = 1024
 	if b < unit {
@@ -285,12 +294,8 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// -- Helpers -----------------------------------------------------------------
-
 func renderStatus(status, conclusion string) string {
-	icon := renderStatusIcon(status, conclusion)
-	label := jobStatusLabel(status, conclusion)
-	return icon + " " + label
+	return renderStatusIcon(status, conclusion) + " " + jobStatusLabel(status, conclusion)
 }
 
 func renderStatusIcon(status, conclusion string) string {
@@ -325,4 +330,11 @@ func jobStatusLabel(status, conclusion string) string {
 		return runningStyle.Render("running")
 	}
 	return dimStyle.Render(status)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
