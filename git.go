@@ -54,13 +54,23 @@ func gitForcePush() tea.Msg {
 func gitPullRebase() tea.Msg {
 	_, err := runGit("pull", "--rebase")
 	if err != nil {
-		// Best-effort abort; ignore error from the abort itself.
-		runGit("rebase", "--abort") //nolint:errcheck
+		_, _ = runGit("rebase", "--abort") // best-effort cleanup
 	}
 	return gitPullRebaseMsg{err: err}
 }
 
 // -- Helpers -----------------------------------------------------------------
+
+// countLines counts non-empty lines in command output (whitespace-trimmed).
+func countLines(s string) int {
+	n := 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
+}
 
 // parseSlug extracts "owner/repo" from a remote URL, supporting both HTTPS
 // (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git)
@@ -112,38 +122,20 @@ func fetchRepoState() tea.Msg {
 		rs.Slug = parseSlug(url)
 	}
 
-	unpushed := make(map[string]bool)
 	upstream := remote + "/" + branch
 	if _, err := runGit("rev-parse", "--verify", upstream); err == nil {
 		if out, err := runGit("rev-list", upstream+"..HEAD"); err == nil {
-			for _, s := range strings.Split(out, "\n") {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					unpushed[s] = true
-				}
-			}
+			rs.Ahead = countLines(out)
 		}
-		// Count commits upstream has that we don't.
 		if out, err := runGit("rev-list", "HEAD.."+upstream); err == nil {
-			for _, s := range strings.Split(out, "\n") {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					rs.Behind++
-				}
-			}
+			rs.Behind = countLines(out)
 		}
 	} else {
 		// No upstream tracked — treat all local commits as unpushed.
 		if out, _ := runGit("rev-list", "HEAD"); out != "" {
-			for _, s := range strings.Split(out, "\n") {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					unpushed[s] = true
-				}
-			}
+			rs.Ahead = countLines(out)
 		}
 	}
-	rs.Ahead = len(unpushed)
 
 	return repoStateMsg(rs)
 }

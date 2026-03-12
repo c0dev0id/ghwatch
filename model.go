@@ -39,6 +39,10 @@ type model struct {
 	// completes AND --auto is active.
 	autoInstall bool
 
+	// pullFailed is set when git pull --rebase fails so we don't retry in a
+	// tight loop. Cleared automatically when Behind drops to zero.
+	pullFailed bool
+
 	// GitHub Actions workflow data for the tracked SHA
 	workflow workflowRun
 
@@ -81,6 +85,19 @@ func initialModel(workflowName, packageName, artifactName string, autoFlag bool)
 func (m model) Init() tea.Cmd {
 	startGitWatcher()
 	return tea.Batch(fetchRepoState, checkWorkflows, tick(3*time.Second), waitForGitChange())
+}
+
+// beginInstall transitions to stateInstalling, resets progress state, and
+// starts the install goroutine. The caller supplies the log message.
+func (m *model) beginInstall(runID int, artifactName, logMsg string) tea.Cmd {
+	m.state = stateInstalling
+	m.artifactList = nil
+	m.installLog = nil
+	m.downloadedBytes = 0
+	m.totalBytes = 0
+	m.addLog(logMsg)
+	go installToChannel(runID, m.trackedSHA, m.repo.Slug, m.packageName, artifactName, m.installProgressCh)
+	return waitForInstallProgress(m.installProgressCh)
 }
 
 // addLog appends a timestamped line to the activity log, capping at maxLogLines.

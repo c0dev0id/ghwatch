@@ -54,16 +54,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 				if m.artifactName != "" {
-					// Artifact pinned via flag — install directly.
-					m.state = stateInstalling
-					m.installLog = nil
-					m.downloadedBytes = 0
-					m.totalBytes = 0
-					m.addLog(fmt.Sprintf("installing (run #%d, %s)...",
-						m.workflow.ID, shortSHA(m.trackedSHA)))
-					go installToChannel(m.workflow.ID, m.trackedSHA, m.repo.Slug,
-						m.packageName, m.artifactName, m.installProgressCh)
-					return m, waitForInstallProgress(m.installProgressCh)
+					return m, m.beginInstall(m.workflow.ID, m.artifactName,
+						fmt.Sprintf("installing (run #%d, %s)...", m.workflow.ID, shortSHA(m.trackedSHA)))
 				}
 				// No artifact pinned — fetch list and show picker.
 				m.state = stateSelectingArtifact
@@ -77,16 +69,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				idx := int(msg.String()[0] - '1')
 				if idx < len(m.artifactList) {
 					chosen := m.artifactList[idx]
-					m.state = stateInstalling
-					m.artifactList = nil
-					m.installLog = nil
-					m.downloadedBytes = 0
-					m.totalBytes = 0
-					m.addLog(fmt.Sprintf("installing %q (run #%d)...",
-						chosen.Name, m.workflow.ID))
-					go installToChannel(m.workflow.ID, m.trackedSHA, m.repo.Slug,
-						m.packageName, chosen.Name, m.installProgressCh)
-					return m, waitForInstallProgress(m.installProgressCh)
+					return m, m.beginInstall(m.workflow.ID, chosen.Name,
+						fmt.Sprintf("installing %q (run #%d)...", chosen.Name, m.workflow.ID))
 				}
 			}
 
@@ -158,7 +142,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// -- Pull-rebase when upstream is ahead ---------------------------------
 		// Rebase local commits on top of upstream before pushing.
-		if m.state == stateIdle && m.repo.Behind > 0 {
+		// Once the upstream is no longer ahead, clear any previous failure latch.
+		if m.pullFailed && m.repo.Behind == 0 {
+			m.pullFailed = false
+		}
+		if m.state == stateIdle && m.repo.Behind > 0 && !m.pullFailed {
 			m.state = statePulling
 			m.addLog(fmt.Sprintf("upstream is %d commit(s) ahead — pulling with rebase", m.repo.Behind))
 			return m, gitPullRebase
@@ -215,9 +203,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// -- Pull-rebase result ----------------------------------------------------
 	case gitPullRebaseMsg:
+		if m.state != statePulling {
+			return m, nil // ignore late or unexpected messages
+		}
 		if msg.err != nil {
+			m.pullFailed = true
 			m.state = stateIdle
-			m.addLog("pull --rebase failed — resolve conflicts manually")
+			m.addLog("pull --rebase failed: " + msg.err.Error())
+			m.addLog("resolve conflicts manually; ghwatch will retry when upstream syncs")
 			return m, nil
 		}
 		m.addLog("pull --rebase OK")
@@ -227,7 +220,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gitPushMsg:
 		if msg.err != nil {
 			m.state = statePushFailed
-			m.addLog("push failed")
+			m.addLog("push failed: " + msg.err.Error())
 			return m, nil
 		}
 		if !m.hasWorkflows {
@@ -262,14 +255,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.autoInstall {
 				if m.artifactName != "" {
 					// Artifact pinned via --artifact — install directly.
-					m.state = stateInstalling
-					m.installLog = nil
-					m.downloadedBytes = 0
-					m.totalBytes = 0
-					m.addLog(fmt.Sprintf("workflow OK (run #%d) — installing", wr.ID))
-					go installToChannel(wr.ID, m.trackedSHA, m.repo.Slug,
-						m.packageName, m.artifactName, m.installProgressCh)
-					return m, waitForInstallProgress(m.installProgressCh)
+					return m, m.beginInstall(wr.ID, m.artifactName,
+						fmt.Sprintf("workflow OK (run #%d) — installing", wr.ID))
 				}
 				// --auto without --artifact — open picker (same as pressing 'i').
 				m.addLog(fmt.Sprintf("workflow OK (run #%d) — select artifact", wr.ID))
@@ -279,7 +266,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Display-only mode: inform and go idle.
 			m.addLog(fmt.Sprintf("workflow OK (run #%d)%s",
-				wr.ID, installHint(m.artifactName)))
+				wr.ID, installHint()))
 			m.state = stateIdle
 			return m, fetchRepoState
 		}
@@ -287,7 +274,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Workflow failed — go idle; the job/step tree already shows the details.
 		m.state = stateIdle
 		m.addLog(fmt.Sprintf("workflow failed (run #%d)", wr.ID))
-		return m, nil
+		return m, fetchRepoState
 
 	// -- Artifact list (for picker) -------------------------------------------
 	case artifactListMsg:
@@ -352,12 +339,9 @@ func tryStartupMonitor(m *model) tea.Cmd {
 	return fetchWorkflow(m.workflowName, m.trackedSHA, 0)
 }
 
-// installHint returns a short footer hint for display-only mode.
-func installHint(artifactName string) string {
-	if artifactName == "" {
-		return " — press i to install"
-	}
-	return ""
+// installHint returns the footer hint shown after a successful workflow in display-only mode.
+func installHint() string {
+	return " — press i to install"
 }
 
 // shortSHA returns the first 7 characters of a SHA, or the full string if shorter.
