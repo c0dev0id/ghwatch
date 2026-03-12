@@ -51,6 +51,15 @@ func gitForcePush() tea.Msg {
 	return gitPushMsg{err: err}
 }
 
+func gitPullRebase() tea.Msg {
+	_, err := runGit("pull", "--rebase")
+	if err != nil {
+		// Best-effort abort; ignore error from the abort itself.
+		runGit("rebase", "--abort") //nolint:errcheck
+	}
+	return gitPullRebaseMsg{err: err}
+}
+
 // -- Helpers -----------------------------------------------------------------
 
 // parseSlug extracts "owner/repo" from a remote URL, supporting both HTTPS
@@ -111,6 +120,15 @@ func fetchRepoState() tea.Msg {
 				s = strings.TrimSpace(s)
 				if s != "" {
 					unpushed[s] = true
+				}
+			}
+		}
+		// Count commits upstream has that we don't.
+		if out, err := runGit("rev-list", "HEAD.."+upstream); err == nil {
+			for _, s := range strings.Split(out, "\n") {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					rs.Behind++
 				}
 			}
 		}

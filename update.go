@@ -140,6 +140,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// -- Pull-rebase when upstream is ahead ---------------------------------
+		// Rebase local commits on top of upstream before pushing.
+		if m.state == stateIdle && m.repo.Behind > 0 {
+			m.state = statePulling
+			m.addLog(fmt.Sprintf("upstream is %d commit(s) ahead — pulling with rebase", m.repo.Behind))
+			return m, gitPullRebase
+		}
+
 		// -- Normal push trigger ------------------------------------------------
 		if m.state == stateIdle && m.repo.Ahead > 0 {
 			m.state = statePushing
@@ -188,6 +196,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// -- Pre-push delay elapsed ------------------------------------------------
 	case pushReadyMsg:
 		return m, gitPush
+
+	// -- Pull-rebase result ----------------------------------------------------
+	case gitPullRebaseMsg:
+		if msg.err != nil {
+			m.state = stateIdle
+			m.addLog("pull --rebase failed — resolve conflicts manually")
+			return m, nil
+		}
+		m.addLog("pull --rebase OK")
+		return m, fetchRepoState
 
 	// -- Push result -----------------------------------------------------------
 	case gitPushMsg:
@@ -309,7 +327,7 @@ func tryStartupMonitor(m *model) tea.Cmd {
 	if m.trackedSHA != "" || m.repo.HeadSHA == "" || !m.hasWorkflows {
 		return nil
 	}
-	if m.state != stateIdle || m.repo.Ahead != 0 {
+	if m.state != stateIdle || m.repo.Ahead != 0 || m.repo.Behind != 0 {
 		return nil
 	}
 	m.trackedSHA = m.repo.HeadSHA

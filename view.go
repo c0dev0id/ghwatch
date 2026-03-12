@@ -29,8 +29,12 @@ func (m model) View() string {
 		if m.repo.Ahead > 0 {
 			aheadStr = runningStyle.Render(fmt.Sprintf("  [%d ahead]", m.repo.Ahead))
 		}
+		behindStr := ""
+		if m.repo.Behind > 0 {
+			behindStr = runningStyle.Render(fmt.Sprintf("  [%d behind]", m.repo.Behind))
+		}
 		repoInfo = dimStyle.Render(fmt.Sprintf("  %s → %s/%s",
-			m.repo.Branch, m.repo.Remote, m.repo.Branch)) + aheadStr
+			m.repo.Branch, m.repo.Remote, m.repo.Branch)) + aheadStr + behindStr
 	}
 
 	topLines := []string{
@@ -217,6 +221,9 @@ func renderState(m model) string {
 				" idle — last: "+shortSHA(m.trackedSHA))
 		}
 		return "  " + idleStyle.Render("● idle — watching for new commits")
+
+	case statePulling:
+		return "  " + runningStyle.Render(spin) + " pulling with rebase..."
 
 	case statePushing:
 		return "  " + runningStyle.Render(spin) +

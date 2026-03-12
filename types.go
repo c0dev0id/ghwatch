@@ -8,6 +8,7 @@ type appState int
 
 const (
 	stateIdle              appState = iota // watching for new commits
+	statePulling                           // git pull --rebase in progress
 	statePushing                           // git push in progress
 	stateMonitoring                        // watching GitHub Actions workflow
 	stateInstalling                        // downloading + installing APK via adb
@@ -19,6 +20,8 @@ func (s appState) String() string {
 	switch s {
 	case stateIdle:
 		return "idle"
+	case statePulling:
+		return "pulling"
 	case statePushing:
 		return "pushing"
 	case stateMonitoring:
@@ -42,6 +45,7 @@ type repoState struct {
 	Slug    string // "owner/repo" parsed from remote URL
 	HeadSHA string
 	Ahead   int
+	Behind  int
 	Error   string
 }
 
@@ -76,6 +80,7 @@ type repoStateMsg repoState
 type workflowRunMsg workflowRun
 type tickMsg time.Time
 type gitPushMsg struct{ err error }
+type gitPullRebaseMsg struct{ err error }
 type gitChangeMsg struct{}
 type workflowsCheckMsg bool // true = repo has .github/workflows/ files
 type pushReadyMsg struct{}
