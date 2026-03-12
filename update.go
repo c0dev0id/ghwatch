@@ -29,6 +29,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 
+		// 'f' — force-push after a push failure.
+		case "f":
+			if m.state == statePushFailed {
+				m.state = statePushing
+				m.addLog("force pushing " + shortSHA(m.trackedSHA) + "...")
+				return m, gitForcePush
+			}
+
+		// 'r' — retry normal push after a push failure.
+		case "r":
+			if m.state == statePushFailed {
+				m.state = statePushing
+				m.addLog("retrying push " + shortSHA(m.trackedSHA) + "...")
+				return m, gitPush
+			}
+
 		// 'i' — install APK.
 		// With --artifact: install directly.
 		// Without --artifact: open artifact picker to let user choose.
