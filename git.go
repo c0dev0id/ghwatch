@@ -51,14 +51,6 @@ func gitForcePush() tea.Msg {
 	return gitPushMsg{err: err}
 }
 
-func gitPullRebase() tea.Msg {
-	_, err := runGit("pull", "--rebase")
-	if err != nil {
-		_, _ = runGit("rebase", "--abort") // best-effort cleanup
-	}
-	return gitPullRebaseMsg{err: err}
-}
-
 // -- Helpers -----------------------------------------------------------------
 
 // countLines counts non-empty lines in command output (whitespace-trimmed).

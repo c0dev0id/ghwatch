@@ -140,18 +140,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// -- Pull-rebase when upstream is ahead ---------------------------------
-		// Rebase local commits on top of upstream before pushing.
-		// Once the upstream is no longer ahead, clear any previous failure latch.
-		if m.pullFailed && m.repo.Behind == 0 {
-			m.pullFailed = false
-		}
-		if m.state == stateIdle && m.repo.Behind > 0 && !m.pullFailed {
-			m.state = statePulling
-			m.addLog(fmt.Sprintf("upstream is %d commit(s) ahead — pulling with rebase", m.repo.Behind))
-			return m, gitPullRebase
-		}
-
 		// -- Normal push trigger ------------------------------------------------
 		if m.state == stateIdle && m.repo.Ahead > 0 {
 			m.state = statePushing
@@ -200,21 +188,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// -- Pre-push delay elapsed ------------------------------------------------
 	case pushReadyMsg:
 		return m, gitPush
-
-	// -- Pull-rebase result ----------------------------------------------------
-	case gitPullRebaseMsg:
-		if m.state != statePulling {
-			return m, nil // ignore late or unexpected messages
-		}
-		if msg.err != nil {
-			m.pullFailed = true
-			m.state = stateIdle
-			m.addLog("pull --rebase failed: " + msg.err.Error())
-			m.addLog("resolve conflicts manually; ghwatch will retry when upstream syncs")
-			return m, nil
-		}
-		m.addLog("pull --rebase OK")
-		return m, fetchRepoState
 
 	// -- Push result -----------------------------------------------------------
 	case gitPushMsg:

@@ -39,10 +39,6 @@ type model struct {
 	// completes AND --auto is active.
 	autoInstall bool
 
-	// pullFailed is set when git pull --rebase fails so we don't retry in a
-	// tight loop. Cleared automatically when Behind drops to zero.
-	pullFailed bool
-
 	// GitHub Actions workflow data for the tracked SHA
 	workflow workflowRun
 

@@ -226,9 +226,6 @@ func renderState(m model) string {
 		}
 		return "  " + idleStyle.Render("● idle — watching for new commits")
 
-	case statePulling:
-		return "  " + runningStyle.Render(spin) + " pulling with rebase..."
-
 	case statePushing:
 		return "  " + runningStyle.Render(spin) +
 			" pushing " + shaStyle.Render(shortSHA(m.trackedSHA)) + "..."
