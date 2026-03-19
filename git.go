@@ -46,11 +46,6 @@ func gitPush() tea.Msg {
 	return gitPushMsg{err: err}
 }
 
-func gitForcePush() tea.Msg {
-	_, err := runGit("push", "--force")
-	return gitPushMsg{err: err}
-}
-
 // -- Helpers -----------------------------------------------------------------
 
 // countLines counts non-empty lines in command output.

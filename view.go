@@ -51,10 +51,6 @@ func (m model) View() string {
 		if m.workflow.ID != 0 && m.workflow.Conclusion == "success" {
 			footerHint += "  ·  " + runningStyle.Render("i") + dimStyle.Render(" to install")
 		}
-	case statePushFailed:
-		footerHint += "  ·  " +
-			runningStyle.Render("f") + dimStyle.Render(" force push  ·  ") +
-			runningStyle.Render("r") + dimStyle.Render(" retry")
 	case stateSelectingArtifact:
 		if len(m.artifactList) > 0 {
 			footerHint += "  ·  " + dimStyle.Render("number to select  ·  Esc to cancel")
@@ -232,7 +228,7 @@ func renderState(m model) string {
 
 	case statePushFailed:
 		return "  " + failStyle.Render("✗ push failed") +
-			dimStyle.Render(" — commit a fix to continue")
+			dimStyle.Render(" — watching for changes")
 
 	case stateMonitoring:
 		waitingStr := ""
