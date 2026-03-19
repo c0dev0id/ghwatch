@@ -92,7 +92,7 @@ func (m *model) beginInstall(runID int, artifactName, logMsg string) tea.Cmd {
 	m.downloadedBytes = 0
 	m.totalBytes = 0
 	m.addLog(logMsg)
-	go installToChannel(runID, m.trackedSHA, m.repo.Slug, m.packageName, artifactName, m.installProgressCh)
+	go installToChannel(runID, m.repo.Slug, m.packageName, artifactName, m.installProgressCh)
 	return waitForInstallProgress(m.installProgressCh)
 }
 

@@ -53,11 +53,12 @@ func gitForcePush() tea.Msg {
 
 // -- Helpers -----------------------------------------------------------------
 
-// countLines counts non-empty lines in command output (whitespace-trimmed).
+// countLines counts non-empty lines in command output.
+// runGit already trims the full output, so individual lines are clean.
 func countLines(s string) int {
 	n := 0
 	for _, line := range strings.Split(s, "\n") {
-		if strings.TrimSpace(line) != "" {
+		if line != "" {
 			n++
 		}
 	}
@@ -70,10 +71,9 @@ func countLines(s string) int {
 func parseSlug(url string) string {
 	url = strings.TrimSuffix(url, ".git")
 	// SSH: git@github.com:owner/repo
-	if i := strings.Index(url, ":"); i != -1 && !strings.HasPrefix(url, "http") {
-		slug := url[i+1:]
-		if strings.Count(slug, "/") == 1 {
-			return slug
+	if _, after, ok := strings.Cut(url, ":"); ok && !strings.HasPrefix(url, "http") {
+		if strings.Count(after, "/") == 1 {
+			return after
 		}
 	}
 	// HTTPS: https://github.com/owner/repo

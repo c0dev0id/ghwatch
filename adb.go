@@ -601,7 +601,7 @@ func fetchArtifactListCmd(repoSlug string, runID int) tea.Cmd {
 //
 // packageName accepts "" (auto-detect from manifest), "com.example.app"
 // (monkey launch), or "com.example.app/.MainActivity" (am start -n).
-func installToChannel(runID int, sha, repoSlug, packageName, artifactName string, ch chan<- installProgressMsg) {
+func installToChannel(runID int, repoSlug, packageName, artifactName string, ch chan<- installProgressMsg) {
 	var log []string
 	appendLog := func(line string) {
 		log = append(log, line)
